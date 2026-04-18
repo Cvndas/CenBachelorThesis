@@ -11,6 +11,15 @@ function InvertedColor(color)
 end
 
 
+mutable struct MapTile
+    x::Int
+    y::Int
+    costToReach::Int
+
+    function MapTile(x::Int, y::Int; costToReach=1)
+        new(x, y, costToReach)
+    end
+end
 
 
 # This function assumes that the play space is enclosed by walls. Therefore, this should only be called
@@ -26,15 +35,6 @@ end
 
 
 
-struct MapTile
-    x::Int
-    y::Int
-    costToReach::Int
-
-    function MapTile(x::Int, y::Int; costToReach=1)
-        new(x, y, costToReach)
-    end
-end
 
 
 function NotImplemented()

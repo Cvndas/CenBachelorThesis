@@ -70,7 +70,21 @@ function ShowBigMap()
 end
 
 
-function ShowMaze(xMin, xMax, yMin, yMax, walls::Array{Tuple{Int,Int}}, shortestPath::Array{Tuple{Int, Int}})
+function AddEnvironment!(walls::Array{MapTile})
+    for wall in walls
+        diceroll = rand(1:100)
+        if diceroll < 5
+            wall.costToReach = 3
+        elseif diceroll < 15
+            wall.costToReach = 2
+        else
+            wall.costToReach = 1
+        end
+    end
+end
+
+
+function ShowMaze(xMin, xMax, yMin, yMax, walls::Array{Tuple{Int,Int}}, shortestPath::Array{Tuple{Int,Int}})
     fig = Figure()
     axis = Axis(fig[1, 1])
 
@@ -104,25 +118,43 @@ function ShowMaze(xMin, xMax, yMin, yMax, walls::Array{Tuple{Int,Int}}, shortest
     return fig
 end
 
-function CreateMaze()
+
+
+
+function FindExistingMapTile(x, y, existingTiles::Array{MapTile})
+    for existingTile in existingTiles
+        if existingTile.x == x && existingTile.y == y
+            return existingTile
+        end
+    end
+    error("Failed to find the existing tile with x $x and y $y")
 end
+
+
 
 function main()
     println("Entered main()")
+    seed = 5
+    if seed < 0
+        seed = Int(round(time()))
+        println("Generated a seed based on time")
+    end
+    Random.seed!(seed)
 
     xMin = 0
     xMax = 10
     yMin = 0
     yMax = 10
-    seed = 5
-    walls = PrimsMazeGenerator(xMin, xMax, yMin, yMax, seed=seed)
+    walls = PrimsMazeGenerator(xMin, xMax, yMin, yMax)
 
-    # TODO: Modify the maze to use the maptiles too
+    # TODO: Modify the maze to use the maptiles too, maybe? it would just be a cleanup though.
     wallMapTiles = [MapTile(x, y) for (x, y) in walls]
-    startTile = MapTile(xMin, yMin)
-    endTile = MapTile(xMax, yMax)
+    AddEnvironment!(wallMapTiles)
 
-    println(typeof(walls))
+    startTile = FindExistingMapTile(xMin, yMin, )
+    endTile = FindExistingMapTile(xMax, yMax)
+
+    st_shortestPath = Tuple{Int64,Int64}[]
     st_shortestPath = st_AStar(wallMapTiles, startTile, endTile)
 
     mazeImage = ShowMaze(xMin, xMax, yMin, yMax, walls, st_shortestPath)

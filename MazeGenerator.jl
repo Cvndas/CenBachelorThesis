@@ -44,13 +44,8 @@ function MakeEndTileReachable!(path, walls, endTile, xMin, xMax, yMin, yMax)
     end
 end
 
-function PrimsMazeGenerator(xMin, xMax, yMin, yMax; seed=-1)
-    if seed < 0
-        seed = Int(round(time()))
-        println("Generated a seed based on time")
-    end
+function PrimsMazeGenerator(xMin, xMax, yMin, yMax)
 
-    Random.seed!(seed)
 
     frontier = Set{Tuple{Int,Int}}()
     path = Set{Tuple{Int,Int}}()

@@ -48,7 +48,7 @@ function st_AStar(walls::Array{MapTile}, startTile::MapTile, endTile::MapTile)::
                 cameFrom[neighbor] = currentTile
             end
         end
-        # println("Grabbed element from the frontier: $currentTile")
+        println("Grabbed element from the frontier: $currentTile")
     end
 
     println("Done the full pathfinding. Frontier is empty.")
