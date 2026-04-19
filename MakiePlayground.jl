@@ -3,8 +3,7 @@ using Colors
 using Makie.Colors
 using Random
 using Dates
-
-include("MakieRenderer.jl")
+using .CenAstar
 
 function ShowMap()
     fig = Figure()

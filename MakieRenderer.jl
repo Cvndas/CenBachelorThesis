@@ -4,12 +4,38 @@ using Colors
 using Makie.Colors
 using Random
 using Dates
+using GeometryBasics
 
-include("Utilities.jl")
+using .CenAstar
+
+
+function DrawSquares(axis::Axis, coordinates::Array{Tuple{Int,Int}}, color)
+
+    squaresAsPolys = []
+    for coord in coordinates
+        x = coord[1]
+        y = coord[2]
+        bottomLeft = (x, y)
+        bottomRight = (x + 1, y)
+        topRight = (x + 1, y + 1)
+        topLeft = (x, y + 1)
+        poly = Polygon(Point2f[bottomLeft, bottomRight, topRight, topLeft])
+        push!(squaresAsPolys, poly)
+    end
+
+    poly!(axis, squaresAsPolys, color=color)
+end
+
+
+
+
 
 function SquareAtPoint(axis::Axis, coord::Tuple{Int,Int}; color=:black, shouldDrawText=true)
     SquareAtPoint(axis, coord[1], coord[2], color=color, shouldDrawText=shouldDrawText)
 end
+
+
+
 
 
 function SquareAtPoint(axis::Axis, x::Int, y::Int; color=:black, shouldDrawText=true)
@@ -27,4 +53,72 @@ function SquareAtPoint(axis::Axis, x::Int, y::Int; color=:black, shouldDrawText=
     if shouldDrawText
         text!(axis, textX, textY, text=coordinateText, color=textColor)
     end
+end
+
+
+function ShowMaze(
+    wallMapTiles::Array{MapTile},
+    pathMapTiles::Array{MapTile},
+    mapBorderTiles::Array{MapTile},
+    shortestPathTiles::Array{MapTile},
+    attemptedPathTiles::Array{MapTile})
+
+    fig = Figure()
+    axis = Axis(fig[1, 1])
+
+    # Creating batches for terrain
+    dirtPath = MapTile[]
+    waterPath = MapTile[]
+    boostpadPath = MapTile[]
+
+    for tile::MapTile in pathMapTiles
+        if tile.color == PATHCOLOR_Mud
+            push!(dirtPath, tile)
+        elseif tile.color == PATHCOLOR_Water
+            push!(waterPath, tile)
+        elseif tile.color == PATHCOLOR_BoostPad
+            push!(boostpadPath, tile)
+        end
+    end
+
+    if !isempty(dirtPath)
+        dirtCoords = [(tile.x, tile.y) for tile in dirtPath]
+        DrawSquares(axis, dirtCoords, PATHCOLOR_Mud)
+    end
+
+    if !isempty(waterPath)
+        waterCoords = [(tile.x, tile.y) for tile in waterPath]
+        DrawSquares(axis, waterCoords, PATHCOLOR_Water)
+    end
+
+    if !isempty(boostpadPath)
+        boostpadCoords = [(tile.x, tile.y) for tile in boostpadPath]
+        DrawSquares(axis, boostpadCoords, PATHCOLOR_BoostPad)
+    end
+
+    if !isempty(wallMapTiles)
+        walls = [(tile.x, tile.y) for tile in wallMapTiles]
+        # @assert wallMapTiles[1].color == :black "Wall color was $(wallMapTiles[1].color)"
+        wallColor = PATHCOLOR_Wall
+        DrawSquares(axis, walls, wallColor)
+    end
+
+    if !isempty(mapBorderTiles)
+        borders = [(tile.x, tile.y) for tile in mapBorderTiles]
+        borderColor = mapBorderTiles[1].color
+        DrawSquares(axis, borders, borderColor)
+    end
+
+    if !isempty(shortestPathTiles)
+        spTiles = [(tile.x, tile.y) for tile in shortestPathTiles]
+        spColor = shortestPathTiles[1].color
+        DrawSquares(axis, spTiles, spColor)
+    end
+
+    axis.aspect = DataAspect() # Makes the y and x axis scaled equally.
+    hidedecorations!(axis) # Removes the x and y axis numbers. 
+
+    resize_to_layout!(fig)
+    display(fig)
+    return fig
 end

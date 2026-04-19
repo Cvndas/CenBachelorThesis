@@ -1,5 +1,4 @@
-include("Utilities.jl")
-
+using .CenAstar
 
 
 function _MakeEndTileReachable!(path, walls, evacuationVisited, currentEvacuator, xMin, xMax, yMin, yMax)
@@ -45,6 +44,7 @@ function MakeEndTileReachable!(path, walls, endTile, xMin, xMax, yMin, yMax)
 end
 
 function PrimsMazeGenerator(xMin, xMax, yMin, yMax)
+    println("Starting prims maze generation")
 
 
     frontier = Set{Tuple{Int,Int}}()
@@ -58,7 +58,8 @@ function PrimsMazeGenerator(xMin, xMax, yMin, yMax)
 
     currentTile = startTile
     while isempty(frontier) == false
-        candidateFromFrontier = rand(collect(frontier))
+        # candidateFromFrontier = rand(collect(frontier)) # wait this is not necessary???
+        candidateFromFrontier = rand(frontier)
         pathNeighborCount = 0
 
         delete!(frontier, candidateFromFrontier)
@@ -87,7 +88,7 @@ function PrimsMazeGenerator(xMin, xMax, yMin, yMax)
             AddNeighbors!(frontier, path, candidateFromFrontier, xMin, xMax, yMin, yMax)
         end
     end
-
+    println("Going to extract the walls from the path")
 
     walls = Tuple{Int,Int}[]
     for x in xMin:xMax, y in yMin:yMax
@@ -107,17 +108,6 @@ function PrimsMazeGenerator(xMin, xMax, yMin, yMax)
     # println("The path: ")
     # display(path)
     println("Generated a maze via prims algorithm.")
-
-    # Surrouding the play area with walls.
-    for x in (xMin-1:xMax+1)
-        push!(walls, (x, yMin - 1))
-        push!(walls, (x, yMax + 1))
-    end
-
-    for y in yMin:yMax
-        push!(walls, (xMin - 1, y))
-        push!(walls, (xMax + 1, y))
-    end
 
     return walls
 end

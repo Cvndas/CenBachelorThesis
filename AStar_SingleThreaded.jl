@@ -1,45 +1,45 @@
 using DataStructures
-include("Utilities.jl")
+using .CenAstar
 
-function ConstructPath(endTile::MapTile, startTile::MapTile, cameFrom::Dict{MapTile,MapTile})
-    pathReversed = MapTile[]
+function ConstructPath(endTile::MapTile, startTile::MapTile, cameFrom::Dict{MapTile,MapTile})::Array{MapTile}
+    path = MapTile[]
     currentPathTile = endTile
-    push!(pathReversed, currentPathTile)
+    push!(path, currentPathTile)
     while currentPathTile != (startTile)
         currentPathTile = cameFrom[currentPathTile]
-        push!(pathReversed, currentPathTile)
+        push!(path, currentPathTile)
+    end
+    reverse!(path)
+
+    for tile in path
+        ConvertToTraversed!(tile)
     end
 
-    path = Tuple{Int64, Int64}[]
-    for i in length(pathReversed):-1:1
-        push!(path, (pathReversed[i].x, pathReversed[i].y))
-    end
-
-    println("The shortest path, as found by the single threaded A* algorithm: ")
-    display(path)
     return path
 end
 
-function st_AStar(walls::Array{MapTile}, startTile::MapTile, endTile::MapTile)::Array{Tuple{Int64, Int64}}
+
+
+function st_AStar(startTile::MapTile, endTile::MapTile)::Array{MapTile}
     println("Starting the AStar pathfinding")
+    # println("Going to search for endtile with x $(endTile.x) and y $(endTile.y)")
 
-    frontier = PriorityQueue{MapTile, Int}()
-    frontier[startTile] = 0 
+    frontier = PriorityQueue{MapTile,Int}()
+    frontier[startTile] = 0
 
-    cameFrom = Dict{MapTile, MapTile}()
+    cameFrom = Dict{MapTile,MapTile}()
     cameFrom[startTile] = MapTile(-99, -99)
 
-    costSoFar = Dict{MapTile, Int64}()
+    costSoFar = Dict{MapTile,Int64}()
     costSoFar[startTile] = 0
 
     while isempty(frontier) == false
-        currentTile, _ = dequeue_pair!(frontier)
-        if currentTile == endTile
+        currentTile::MapTile, _ = dequeue_pair!(frontier)
+        if currentTile === endTile
             break
         end
 
-        neighbors = MapTile_GetNeighbors(currentTile, walls)
-        for neighbor in neighbors
+        for neighbor::MapTile in currentTile.neighbors
             newCost = costSoFar[currentTile] + neighbor.costToReach
             if !haskey(costSoFar, neighbor) || newCost < costSoFar[neighbor]
                 costSoFar[neighbor] = newCost
@@ -48,10 +48,9 @@ function st_AStar(walls::Array{MapTile}, startTile::MapTile, endTile::MapTile)::
                 cameFrom[neighbor] = currentTile
             end
         end
-        println("Grabbed element from the frontier: $currentTile")
     end
 
-    println("Done the full pathfinding. Frontier is empty.")
+    println("Done the full pathfinding. Constructing the path now.")
     return ConstructPath(endTile, startTile, cameFrom)
 
 end

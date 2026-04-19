@@ -1,14 +1,18 @@
+module CenAstar
+
 using GLMakie
 using Colors
 using Makie.Colors
 using Random
 using Dates
-
+using Serialization
 include("Utilities.jl")
+include("MapTile.jl")
 include("MazeGenerator.jl")
 include("MakiePlayground.jl")
 include("MakieRenderer.jl")
 include("AStar_SingleThreaded.jl")
+include("MapTile_Functions.jl")
 
 
 
@@ -23,102 +27,35 @@ include("AStar_SingleThreaded.jl")
 
 
 
-function ShowBigMap()
 
 
-    # TODO: Replace this random gen with prims algorithm
 
-    points = Tuple{Int,Int}[]
-    # for i in 1:100
-    #     print("Generating maze with i == $i")
-    #     points = PrimsMazeGenerator(xMin, xMax, yMin, yMax, seed=i)
-    # end
 
-    PunctureHoles!(points)
 
-    # points = Tuple{Int, Int}[]
-    # points = GenerateRandomPointsForMap(xMin, xMax, yMin, yMax, seed=-1)
 
-    numberOfPoints = length(points)
-    shouldDrawText = numberOfPoints < 5
 
-    for point in points
-        SquareAtPoint(axis, point, shouldDrawText=shouldDrawText)
+
+
+
+
+
+
+
+
+
+
+function GenerateMapBorders(xMin, xMax, yMin, yMax)
+    mapBorders = MapTile[]
+    for x in xMin-1:xMax+1
+        push!(mapBorders, CreateMapBorder(x, yMin - 1))
+        push!(mapBorders, CreateMapBorder(x, yMax + 1))
     end
-
-    println("Placed squares at $(length(points)) points. Going to display them now.")
-
-    borderColor = :green
-
-    # Drawing a border around
-    for verti in (yMin-1):(yMax+1)
-        SquareAtPoint(axis, (xMin - 1, verti), color=borderColor, shouldDrawText=false)
-        SquareAtPoint(axis, (xMax + 1, verti), color=borderColor, shouldDrawText=false)
+    for y in yMin:yMax
+        push!(mapBorders, CreateMapBorder(xMin - 1, y))
+        push!(mapBorders, CreateMapBorder(xMax + 1, y))
     end
-    for hori in (xMin-1):(xMax+1)
-        SquareAtPoint(axis, (hori, yMin - 1), color=borderColor, shouldDrawText=false)
-        SquareAtPoint(axis, (hori, yMax + 1), color=borderColor, shouldDrawText=false)
-    end
-
-    axis.aspect = DataAspect() # Makes the y and x axis scaled equally.
-    hidedecorations!(axis) # Removes the x and y axis numbers. 
-
-    resize_to_layout!(fig)
-    display(fig)
-    return fig
-
+    return mapBorders
 end
-
-
-function AddEnvironment!(walls::Array{MapTile})
-    for wall in walls
-        diceroll = rand(1:100)
-        if diceroll < 5
-            wall.costToReach = 3
-        elseif diceroll < 15
-            wall.costToReach = 2
-        else
-            wall.costToReach = 1
-        end
-    end
-end
-
-
-function ShowMaze(xMin, xMax, yMin, yMax, walls::Array{Tuple{Int,Int}}, shortestPath::Array{Tuple{Int,Int}})
-    fig = Figure()
-    axis = Axis(fig[1, 1])
-
-    for wall in walls
-        if !(wall in shortestPath)
-            SquareAtPoint(axis, wall, shouldDrawText=false)
-        end
-    end
-
-    for path in shortestPath
-        SquareAtPoint(axis, path, color=:green, shouldDrawText=false)
-    end
-
-    borderColor = :green
-
-    # # Drawing a border around
-    # for verti in (yMin-1):(yMax+1)
-    #     SquareAtPoint(axis, (xMin - 1, verti), color=borderColor, shouldDrawText=false)
-    #     SquareAtPoint(axis, (xMax + 1, verti), color=borderColor, shouldDrawText=false)
-    # end
-    # for hori in (xMin-1):(xMax+1)
-    #     SquareAtPoint(axis, (hori, yMin - 1), color=borderColor, shouldDrawText=false)
-    #     SquareAtPoint(axis, (hori, yMax + 1), color=borderColor, shouldDrawText=false)
-    # end
-
-    axis.aspect = DataAspect() # Makes the y and x axis scaled equally.
-    hidedecorations!(axis) # Removes the x and y axis numbers. 
-
-    resize_to_layout!(fig)
-    display(fig)
-    return fig
-end
-
-
 
 
 function FindExistingMapTile(x, y, existingTiles::Array{MapTile})
@@ -127,37 +64,77 @@ function FindExistingMapTile(x, y, existingTiles::Array{MapTile})
             return existingTile
         end
     end
-    error("Failed to find the existing tile with x $x and y $y")
+    return nothing
 end
 
 
 
+struct ComputedMaze
+    startTile::MapTile
+    endTile::MapTile
+    traversablePaths::Array{MapTile}
+    mapBorders::Array{MapTile}
+    wallMapTiles::Array{MapTile}
+    pathMapTiles::Array{MapTile}
+end
+
+function ComputeMaze()::ComputedMaze
+    xMin = 0
+    xMax = 600
+    yMin = 0
+    yMax = 200
+
+    walls = PrimsMazeGenerator(xMin, xMax, yMin, yMax)
+    PunctureHoles!(walls)
+
+    wallMapTiles = [CreateWall(x, y) for (x, y) in walls]
+    println("Generated the walls")
+    pathMapTiles = GeneratePathTiles(walls, xMin, xMax, yMin, yMax)
+    println("Generated the path tiles")
+    mapBorders = GenerateMapBorders(xMin, xMax, yMin, yMax)
+    println("Generated the map borders")
+
+    startTile = FindExistingMapTile(xMin, yMin, pathMapTiles)
+    println("Found the start tile")
+    @assert startTile !== nothing "Start tile wasn't found"
+    endTile = FindExistingMapTile(xMax, yMax, pathMapTiles)
+    println("Found the end tile")
+    @assert endTile !== nothing "End tile wasn't found"
+
+    traversablePaths = [wallMapTiles; pathMapTiles]
+
+    @time LoadNeighbors!(traversablePaths)
+    computedMaze::ComputedMaze = ComputedMaze(startTile, endTile, traversablePaths, mapBorders, wallMapTiles, pathMapTiles)
+    @assert wallMapTiles[1].color == :black "Wall map tiles color was not black: $(wallMapTiles[1].color)"
+    return computedMaze
+end
+
+
+
+
 function main()
+    # COMPUTE_MAZE = false
+    # COMPUTE_MAZE = false
+
     println("Entered main()")
-    seed = 5
+    seed = -1
     if seed < 0
         seed = Int(round(time()))
         println("Generated a seed based on time")
     end
     Random.seed!(seed)
 
-    xMin = 0
-    xMax = 10
-    yMin = 0
-    yMax = 10
-    walls = PrimsMazeGenerator(xMin, xMax, yMin, yMax)
+    # if COMPUTE_MAZE
+    println("Timing ComputeMaze()")
+    @time computedMaze::ComputedMaze = ComputeMaze()
 
-    # TODO: Modify the maze to use the maptiles too, maybe? it would just be a cleanup though.
-    wallMapTiles = [MapTile(x, y) for (x, y) in walls]
-    AddEnvironment!(wallMapTiles)
+    println("Going to solve the maze with Single Threaded A*")
+    @time shortestPathTiles = st_AStar(computedMaze.startTile, computedMaze.endTile)
+    # @assert computedMaze.wallMapTiles[1].color == :black "Wallmaptiles had wrong color"
+    attemptedPathTiles = MapTile[]
 
-    startTile = FindExistingMapTile(xMin, yMin, )
-    endTile = FindExistingMapTile(xMax, yMax)
-
-    st_shortestPath = Tuple{Int64,Int64}[]
-    st_shortestPath = st_AStar(wallMapTiles, startTile, endTile)
-
-    mazeImage = ShowMaze(xMin, xMax, yMin, yMax, walls, st_shortestPath)
+    println("Path is done. Going to render the maze now.")
+    mazeImage = ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
     save("mazeImage.png", mazeImage)
 
 
@@ -171,3 +148,6 @@ end
 
 
 main()
+
+
+end
