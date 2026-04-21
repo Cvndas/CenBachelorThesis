@@ -3,6 +3,7 @@ const PATHCOST_Default = 5
 const PATHCOST_BoostPad = 1
 const PATHCOST_Mud = 7
 const PATHCOST_Water = 13
+const PATHCOST_Border = -99
 
 const PATHCOLOR_Default = :white
 const PATHCOLOR_Wall = :black
@@ -15,37 +16,33 @@ const PATHCOLOR_MapBorder = :silver
 
 
 function CreateWall(x, y)
-    return MapTile(x, y, costToReach=PATHCOST_Wall, color=PATHCOLOR_Wall)
+    return MapTile(x, y, costToReach=PATHCOST_Wall)
 end
 
 function CreateDefault(x, y)
-    return MapTile(x, y, costToReach=PATHCOST_Default, color=PATHCOLOR_Default)
+    return MapTile(x, y, costToReach=PATHCOST_Default)
 end
 
 function CreateMapBorder(x, y)
-    return MapTile(x, y, costToReach=-99, color=PATHCOLOR_MapBorder)
+    return MapTile(x, y, costToReach=PATHCOST_Border)
 end
 
 
 function ConvertToDefault!(mapTile::MapTile)
     mapTile.costToReach = PATHCOST_Default
-    mapTile.color = PATHCOLOR_Default
 end
 
 
 
 function ConvertToWater!(mapTile::MapTile)
-    mapTile.color = PATHCOLOR_Water
     mapTile.costToReach = PATHCOST_Water
 end
 
 function ConvertToMud!(mapTile::MapTile)
-    mapTile.color = PATHCOLOR_Mud
     mapTile.costToReach = PATHCOST_Mud
 end
 
 function ConvertToBoostPad!(mapTile::MapTile)
-    mapTile.color = PATHCOLOR_BoostPad
     mapTile.costToReach = PATHCOST_BoostPad
 end
 

@@ -9,7 +9,7 @@ using GeometryBasics
 using .CenAstar
 
 
-function DrawSquares(axis::Axis, coordinates::Array{Tuple{Int,Int}}, color)
+function DrawSquares(axis::Axis, coordinates::Array{Tuple{Int32,Int32}}, color)
 
     squaresAsPolys = []
     for coord in coordinates
@@ -72,11 +72,11 @@ function ShowMaze(
     boostpadPath = MapTile[]
 
     for tile::MapTile in pathMapTiles
-        if tile.color == PATHCOLOR_Mud
+        if tile.costToReach == PATHCOST_Mud
             push!(dirtPath, tile)
-        elseif tile.color == PATHCOLOR_Water
+        elseif tile.costToReach == PATHCOST_Water
             push!(waterPath, tile)
-        elseif tile.color == PATHCOLOR_BoostPad
+        elseif tile.costToReach == PATHCOST_BoostPad
             push!(boostpadPath, tile)
         end
     end
@@ -99,14 +99,12 @@ function ShowMaze(
     if !isempty(wallMapTiles)
         walls = [(tile.x, tile.y) for tile in wallMapTiles]
         # @assert wallMapTiles[1].color == :black "Wall color was $(wallMapTiles[1].color)"
-        wallColor = PATHCOLOR_Wall
-        DrawSquares(axis, walls, wallColor)
+        DrawSquares(axis, walls, PATHCOLOR_Wall)
     end
 
     if !isempty(mapBorderTiles)
         borders = [(tile.x, tile.y) for tile in mapBorderTiles]
-        borderColor = mapBorderTiles[1].color
-        DrawSquares(axis, borders, borderColor)
+        DrawSquares(axis, borders, PATHCOLOR_MapBorder)
     end
 
     if !isempty(shortestPathTiles)

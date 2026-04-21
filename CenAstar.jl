@@ -101,7 +101,6 @@ function ComputeMaze()::ComputedMaze
     end
 
     computedMaze::ComputedMaze = ComputedMaze(startTile, endTile, traversablePaths, mapBorders, wallMapTiles, pathMapTiles, allTiles2DArray)
-    @assert wallMapTiles[1].color == :black "Wall map tiles color was not black: $(wallMapTiles[1].color)"
     return computedMaze
 end
 

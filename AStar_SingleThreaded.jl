@@ -29,6 +29,8 @@ function _fillWithNewNeighbors!(neighbors::Array{MapTile}, currentTile::MapTile,
     end
 end
 
+
+
 function st_AStar(startTile::MapTile, endTile::MapTile, allTiles::Array{MapTile,2})::Array{MapTile}
     println("Starting the AStar pathfinding")
 

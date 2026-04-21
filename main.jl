@@ -9,56 +9,17 @@ include("main.jl"); Cen.main_MPI_ParallelHierarchicSearch();
 function main_MPI_ParallelHierarchicSearch()
     # TODO: Enter MPI immediately. 
     code = quote
-
-        const MasterRank = 0
+        using MPI
         include("CenAstar.jl")
         using .CenAstar
 
-        using MPI
         MPI.Init()
         comm = MPI.COMM_WORLD
         nranks = MPI.Comm_size(comm)
         rank = MPI.Comm_rank(comm)
         host = MPI.Get_processor_name()
         println("Hello from $host, I am process $rank of $nranks processes!")
-
-        if rank == MasterRank
-            CenAstar.Initialize()
-            println("Entered main_MPI_ParallelHierarchicSearch()")
-            computedMaze::ComputedMaze = ComputeMaze()
-            # allPathsDict = Dict{Tuple{Int,Int},MapTile}()
-            # for mapTile in computedMaze.traversablePaths
-            #     allPathsDict[(mapTile.x, mapTile.y)] = mapTile
-            # end
-
-            shortestPathTiles = CenAstar.MPI_ParallelHierarchicSearch(computedMaze.startTile, computedMaze.endTile, computedMaze.allTiles)
-            attemptedPathTiles = MapTile[]
-
-            println("Path is done. Going to render the maze now.")
-            mazeImage = CenAstar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
-
-            ComputePathCost = path -> sum(tile.costToReach for tile::MapTile in path)
-            mpiPhsCost = ComputePathCost(shortestPathTiles)
-
-            println("\n--- THE RESULTS ---\n")
-            println("MPI PHS found a path with cost $mpiPhsCost")
-
-            # TODO: Wait for the master rank to produce the maze. Like a barrier. Or maybe all should produce the maze, then
-            # wait for the barrier.
-        end
-
-        MPI.Barrier(comm)
-        println("I'm rank $rank and I'm done with the barrier!")
-
-
-        if rank == MasterRank
-            println("Press enter to exit")
-            readline()
-            # fig = Figure()
-            println("Done with main().")
-        end
-
-        MPI.Finalize()
+        CenAstar.MPI_PHS_Entry(comm, nranks, rank, host)
     end
     run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
 
