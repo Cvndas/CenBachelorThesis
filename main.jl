@@ -5,13 +5,15 @@ using Colors
 using Makie.Colors
 using Random
 using Dates
-using Serialization
+# using Serialization
 include("Utilities.jl")
 include("MapTile.jl")
 include("MazeGenerator.jl")
 include("MakiePlayground.jl")
 include("MakieRenderer.jl")
+include("AStar_Shared.jl")
 include("AStar_SingleThreaded.jl")
+include("MPI_ParallelHierarchicSearch.jl")
 include("MapTile_Functions.jl")
 
 
@@ -80,9 +82,9 @@ end
 
 function ComputeMaze()::ComputedMaze
     xMin = 0
-    xMax = 600
+    xMax = 500
     yMin = 0
-    yMax = 200
+    yMax = 500
 
     walls = PrimsMazeGenerator(xMin, xMax, yMin, yMax)
     PunctureHoles!(walls)
@@ -112,12 +114,13 @@ end
 
 
 
+
 function main()
     # COMPUTE_MAZE = false
     # COMPUTE_MAZE = false
 
     println("Entered main()")
-    seed = -1
+    seed = 5
     if seed < 0
         seed = Int(round(time()))
         println("Generated a seed based on time")
@@ -127,17 +130,29 @@ function main()
     # if COMPUTE_MAZE
     println("Timing ComputeMaze()")
     @time computedMaze::ComputedMaze = ComputeMaze()
+    allPathsDict = Dict{Tuple{Int,Int},MapTile}()
+    for mapTile in computedMaze.traversablePaths
+        allPathsDict[(mapTile.x, mapTile.y)] = mapTile
+    end
 
     println("Going to solve the maze with Single Threaded A*")
-    @time shortestPathTiles = st_AStar(computedMaze.startTile, computedMaze.endTile)
+    @time shortestPathTiles_AStar = st_AStar(computedMaze.startTile, computedMaze.endTile)
+
+    @time shortestPathTiles_MPI_PHS = MPI_ParallelHierarchicSearch(computedMaze.startTile, computedMaze.endTile, allPathsDict)
     # @assert computedMaze.wallMapTiles[1].color == :black "Wallmaptiles had wrong color"
     attemptedPathTiles = MapTile[]
 
     println("Path is done. Going to render the maze now.")
-    mazeImage = ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
-    save("mazeImage.png", mazeImage)
+    # mazeImage = ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
+    # save("mazeImage.png", mazeImage)
 
+    ComputePathCost = path -> sum(tile.costToReach for tile::MapTile in path)
+    AStar_Cost = ComputePathCost(shortestPathTiles_AStar)
+    MPI_PH_Cost = ComputePathCost(shortestPathTiles_MPI_PHS)
 
+    println("\n--- THE RESULTS ---\n")
+    println("AStar found a path with cost $AStar_Cost")
+    println("MPI Parallel Hierarchic Search found a path with cost $MPI_PH_Cost")
 
     # fig = Figure()
     println("Done with main().")

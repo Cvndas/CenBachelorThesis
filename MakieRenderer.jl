@@ -63,7 +63,7 @@ function ShowMaze(
     shortestPathTiles::Array{MapTile},
     attemptedPathTiles::Array{MapTile})
 
-    fig = Figure()
+    fig = Figure(; size=(1600, 900))
     axis = Axis(fig[1, 1])
 
     # Creating batches for terrain

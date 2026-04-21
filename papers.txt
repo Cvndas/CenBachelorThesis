@@ -1,0 +1,2 @@
+https://staff.ru.is/yngvi/pdf/BjornssonEHS05.pdf for fringe search, an A* alternative, mentioned in the ripple
+search paper.
