@@ -43,12 +43,12 @@ function MakeEndTileReachable!(path, walls, endTile, xMin, xMax, yMin, yMax)
     end
 end
 
-function PrimsMazeGenerator(xMin, xMax, yMin, yMax)
+function PrimsMazeGenerator(xMin::Int32, xMax::Int32, yMin::Int32, yMax::Int32)::Array{Tuple{Int32,Int32}}
     println("Starting prims maze generation")
 
 
-    frontier = Set{Tuple{Int,Int}}()
-    path = Set{Tuple{Int,Int}}()
+    frontier = Set{Tuple{Int32,Int32}}()
+    path = Set{Tuple{Int32,Int32}}()
 
     startTile = (xMin, yMin)
     endTile = (xMax, yMax)
@@ -64,10 +64,10 @@ function PrimsMazeGenerator(xMin, xMax, yMin, yMax)
 
         delete!(frontier, candidateFromFrontier)
 
-        north = (candidateFromFrontier[1], candidateFromFrontier[2] + 1)
-        east = (candidateFromFrontier[1] + 1, candidateFromFrontier[2])
-        south = (candidateFromFrontier[1], candidateFromFrontier[2] - 1)
-        west = (candidateFromFrontier[1] - 1, candidateFromFrontier[2])
+        north::Tuple{Int32,Int32} = (candidateFromFrontier[1], candidateFromFrontier[2] + 1)
+        east::Tuple{Int32,Int32} = (candidateFromFrontier[1] + 1, candidateFromFrontier[2])
+        south::Tuple{Int32,Int32} = (candidateFromFrontier[1], candidateFromFrontier[2] - 1)
+        west::Tuple{Int32,Int32} = (candidateFromFrontier[1] - 1, candidateFromFrontier[2])
 
         if north in path
             pathNeighborCount += 1
@@ -90,8 +90,8 @@ function PrimsMazeGenerator(xMin, xMax, yMin, yMax)
     end
     println("Going to extract the walls from the path")
 
-    walls = Tuple{Int,Int}[]
-    for x in xMin:xMax, y in yMin:yMax
+    walls = Tuple{Int32,Int32}[]
+    for x::Int32 in xMin:xMax, y::Int32 in yMin:yMax
         if !((x, y) in path)
             push!(walls, (x, y))
         end
@@ -122,23 +122,23 @@ function PunctureHoles!(points)
 end
 
 
-function IsInBounds(point::Tuple{Int,Int}, xMin, xMax, yMin, yMax)
+function IsInBounds(point::Tuple{Int32,Int32}, xMin, xMax, yMin, yMax)
     return point[1] >= xMin && point[1] <= xMax && point[2] >= yMin && point[2] <= yMax
 end
 
 
 
-function AddNeighborMaybe!(frontier, path, neighbor, xMin, xMax, yMin, yMax)
+function AddNeighborMaybe!(frontier, path, neighbor, xMin::Int32, xMax::Int32, yMin::Int32, yMax::Int32)
     if !(neighbor in path) && !(neighbor in frontier) && IsInBounds(neighbor, xMin, xMax, yMin, yMax)
         push!(frontier, neighbor)
     end
 end
 
-function AddNeighbors!(frontier, path, tile, xMin, xMax, yMin, yMax)
-    north = (tile[1], tile[2] + 1)
-    east = (tile[1] + 1, tile[2])
-    south = (tile[1], tile[2] - 1)
-    west = (tile[1] - 1, tile[2])
+function AddNeighbors!(frontier, path, tile, xMin::Int32, xMax::Int32, yMin::Int32, yMax::Int32)
+    north::Tuple{Int32,Int32} = (tile[1], tile[2] + 1)
+    east::Tuple{Int32,Int32} = (tile[1] + 1, tile[2])
+    south::Tuple{Int32,Int32} = (tile[1], tile[2] - 1)
+    west::Tuple{Int32,Int32} = (tile[1] - 1, tile[2])
 
     AddNeighborMaybe!(frontier, path, north, xMin, xMax, yMin, yMax)
     AddNeighborMaybe!(frontier, path, east, xMin, xMax, yMin, yMax)
@@ -147,13 +147,13 @@ function AddNeighbors!(frontier, path, tile, xMin, xMax, yMin, yMax)
 end
 
 
-function GetNeighbors(tile, xMin, xMax, yMin, yMax)
-    north = (tile[1], tile[2] + 1)
-    east = (tile[1] + 1, tile[2])
-    south = (tile[1], tile[2] - 1)
-    west = (tile[1] - 1, tile[2])
+function GetNeighbors(tile, xMin, xMax, yMin, yMax)::Array{Tuple{Int32,Int32}}
+    north::Tuple{Int32,Int32} = (tile[1], tile[2] + 1)
+    east::Tuple{Int32,Int32} = (tile[1] + 1, tile[2])
+    south::Tuple{Int32,Int32} = (tile[1], tile[2] - 1)
+    west::Tuple{Int32,Int32} = (tile[1] - 1, tile[2])
 
-    neighbors = Tuple{Int,Int}[]
+    neighbors = Tuple{Int32,Int32}[]
 
     if IsInBounds(north, xMin, xMax, yMin, yMax)
         push!(neighbors, north)
@@ -169,5 +169,4 @@ function GetNeighbors(tile, xMin, xMax, yMin, yMax)
     end
 
     return neighbors
-
 end

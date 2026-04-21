@@ -99,6 +99,11 @@ function SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
 end
 
 
+
+
+
+
+
 # A reference function for how the MPI version should behave. Basically pseudocode that can be run.
 function SingleThreaded_PHS_ReferenceFunc(startTile::MapTile, endTile::MapTile, allTiles::Array{MapTile,2})::Array{MapTile}
     println("Starting the MPI Ripple Search algorithm.")

@@ -35,15 +35,15 @@ This is a module file. Its purpose is to include the other files that make up Ce
 
 # TODO: organize the remaining functions in here into correct files.
 
-function GenerateMapBorders(xMin, xMax, yMin, yMax)
+function GenerateMapBorders(xMin::Int32, xMax::Int32, yMin::Int32, yMax::Int32)
     mapBorders = MapTile[]
-    for x in xMin-1:xMax+1
-        push!(mapBorders, CreateMapBorder(x, yMin - 1))
-        push!(mapBorders, CreateMapBorder(x, yMax + 1))
+    for x::Int32 in xMin-1:xMax+1
+        push!(mapBorders, CreateMapBorder(x, Int32(yMin - 1)))
+        push!(mapBorders, CreateMapBorder(x, Int32(yMax + 1)))
     end
-    for y in yMin:yMax
-        push!(mapBorders, CreateMapBorder(xMin - 1, y))
-        push!(mapBorders, CreateMapBorder(xMax + 1, y))
+    for y::Int32 in yMin:yMax
+        push!(mapBorders, CreateMapBorder(Int32(xMin - 1), y))
+        push!(mapBorders, CreateMapBorder(Int32(xMax + 1), y))
     end
     return mapBorders
 end
@@ -71,10 +71,10 @@ struct ComputedMaze
 end
 
 function ComputeMaze()::ComputedMaze
-    xMin = 1
-    xMax = 500
-    yMin = 1
-    yMax = 500
+    xMin::Int32 = 1
+    xMax::Int32 = 500
+    yMin::Int32 = 1
+    yMax::Int32 = 500
 
     @assert xMin == 1 # Never Change
     @assert yMin == 1 # Never Change
@@ -82,7 +82,7 @@ function ComputeMaze()::ComputedMaze
     walls = PrimsMazeGenerator(xMin, xMax, yMin, yMax)
     PunctureHoles!(walls)
 
-    wallMapTiles = [CreateWall(x, y) for (x, y) in walls]
+    wallMapTiles = [CreateWall(Int32(x), Int32(y)) for (x, y) in walls]
     println("Generated the walls")
     pathMapTiles = GeneratePathTiles(walls, xMin, xMax, yMin, yMax)
     println("Generated the path tiles")

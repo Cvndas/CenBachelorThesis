@@ -15,15 +15,15 @@ const PATHCOLOR_BoostPad = :orange
 const PATHCOLOR_MapBorder = :silver
 
 
-function CreateWall(x, y)
+function CreateWall(x::Int32, y::Int32)
     return MapTile(x, y, costToReach=PATHCOST_Wall)
 end
 
-function CreateDefault(x, y)
+function CreateDefault(x::Int32, y::Int32)
     return MapTile(x, y, costToReach=PATHCOST_Default)
 end
 
-function CreateMapBorder(x, y)
+function CreateMapBorder(x::Int32, y::Int32)
     return MapTile(x, y, costToReach=PATHCOST_Border)
 end
 
@@ -44,16 +44,6 @@ end
 
 function ConvertToBoostPad!(mapTile::MapTile)
     mapTile.costToReach = PATHCOST_BoostPad
-end
-
-function _FindTile(x, y, tiles::Array{MapTile})
-    for tile::MapTile in tiles
-        if tile.x == x && tile.y == y
-            return tile
-        end
-    end
-
-    return nothing
 end
 
 
@@ -94,14 +84,14 @@ function LoadNeighbors!(tiles::Array{MapTile})
 end
 
 
-function PlaceBlob!(allTilesDict::Dict{Tuple{Int,Int},MapTile}, x::Int, y::Int, size::Int, identifier)
+function PlaceBlob!(allTilesDict::Dict{Tuple{Int32,Int32},MapTile}, x::Int32, y::Int32, size::Int32, identifier)
 
 
-    blobXMin = x - trunc(Int, size / 2)
-    blobXMax = x + trunc(Int, size / 2)
+    blobXMin::Int32 = x - (size ÷ 2)
+    blobXMax::Int32 = x + (size ÷ 2)
 
-    blobYMin = y - trunc(Int, size / 2)
-    blobYMax = y + trunc(Int, size / 2)
+    blobYMin::Int32 = y - (size ÷ 2)
+    blobYMax::Int32 = y + (size ÷ 2)
 
     tilesToModify = MapTile[]
     for x in blobXMin:blobXMax, y in blobYMin:blobYMax
@@ -132,7 +122,7 @@ end
 
 
 
-function PlaceBlobs(pathMapTiles::Array{MapTile}, xMin::Int, xMax::Int, yMin::Int, yMax::Int, identifier)
+function PlaceBlobs(pathMapTiles::Array{MapTile}, xMin::Int32, xMax::Int32, yMin::Int32, yMax::Int32, identifier)
 
     maxBlobDivider = if identifier == :DirtBlob
         100
@@ -144,11 +134,11 @@ function PlaceBlobs(pathMapTiles::Array{MapTile}, xMin::Int, xMax::Int, yMin::In
         error("Identifier $identifier is not supported")
     end
 
-    maxBlobs = trunc(Int, ((xMax * yMax) / maxBlobDivider))
-    minBlobs = trunc(Int, maxBlobs / 5)
-    blobCount = rand(minBlobs:maxBlobs)
+    maxBlobs::Int32 = ((xMax * yMax) ÷ maxBlobDivider)
+    minBlobs::Int32 = maxBlobs ÷ 5
+    blobCount::Int32 = rand(minBlobs:maxBlobs)
 
-    maxBlobSize::Int = if identifier == :DirtBlob
+    maxBlobSize::Int32 = if identifier == :DirtBlob
         16
     elseif identifier == :WaterBlob
         25
@@ -158,22 +148,22 @@ function PlaceBlobs(pathMapTiles::Array{MapTile}, xMin::Int, xMax::Int, yMin::In
         error("Identifier $identifier is not supported")
     end
 
-    minBlobSize::Int = trunc(Int, maxBlobSize / 4)
+    minBlobSize::Int32 = maxBlobSize ÷ 4
     if minBlobSize < 1
         minBlobSize = 1
     end
 
     println("Going to place $blobCount blobs of $identifier")
 
-    allTilesDict = Dict{Tuple{Int,Int},MapTile}()
+    allTilesDict = Dict{Tuple{Int32,Int32},MapTile}()
     for mapTile::MapTile in pathMapTiles
         allTilesDict[(mapTile.x, mapTile.y)] = mapTile
     end
 
     for _ in 1:blobCount
-        blobCenter_X::Int = rand(xMin:xMax)
-        blobCenter_Y::Int = rand(yMin:yMax)
-        blobSize = rand(minBlobSize:maxBlobSize)
+        blobCenter_X::Int32 = rand(xMin:xMax)
+        blobCenter_Y::Int32 = rand(yMin:yMax)
+        blobSize::Int32 = rand(minBlobSize:maxBlobSize)
         PlaceBlob!(allTilesDict, blobCenter_X, blobCenter_Y, blobSize, identifier)
         # println("Placed a blob with identifier $identifier")
     end
@@ -182,10 +172,10 @@ end
 
 
 
-function GeneratePathTiles(walls::Array{Tuple{Int,Int}}, xMin::Int, xMax::Int, yMin::Int, yMax::Int)
+function GeneratePathTiles(walls::Array{Tuple{Int32,Int32}}, xMin::Int32, xMax::Int32, yMin::Int32, yMax::Int32)
     println("Going to create default map tiles for everything that is not a wall")
     pathMapTiles = MapTile[]
-    wallsSet = Set{Tuple{Int,Int}}()
+    wallsSet = Set{Tuple{Int32,Int32}}()
     for wall in walls
         push!(wallsSet, wall)
     end

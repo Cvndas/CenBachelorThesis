@@ -42,12 +42,12 @@ function st_AStar(startTile::MapTile, endTile::MapTile, allTiles::Array{MapTile,
     frontier[startTile] = 0
 
     cameFrom = Dict{MapTile,MapTile}()
-    cameFrom[startTile] = MapTile(-99, -99)
+    cameFrom[startTile] = MapTile(Int32(-99), Int32(-99))
 
     costSoFar = Dict{MapTile,Int64}()
     costSoFar[startTile] = 0
 
-    neighbors = Array{MapTile,1}()
+    neighbors = MapTile[]
 
     while isempty(frontier) == false
         currentTile::MapTile, _ = dequeue_pair!(frontier)
