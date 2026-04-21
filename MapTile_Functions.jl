@@ -33,9 +33,6 @@ function ConvertToDefault!(mapTile::MapTile)
 end
 
 
-function ConvertToTraversed!(mapTile::MapTile)
-    mapTile.color = PATHCOLOR_Traversed
-end
 
 function ConvertToWater!(mapTile::MapTile)
     mapTile.color = PATHCOLOR_Water
@@ -65,6 +62,7 @@ end
 
 
 function LoadNeighbors!(tiles::Array{MapTile})
+    @assert false "Don't use this function. Don't have references to tiles within tiles."
     allTilesDict = Dict{Tuple{Int,Int},MapTile}()
     for mapTile::MapTile in tiles
         allTilesDict[(mapTile.x, mapTile.y)] = mapTile

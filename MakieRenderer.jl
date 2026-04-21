@@ -111,8 +111,7 @@ function ShowMaze(
 
     if !isempty(shortestPathTiles)
         spTiles = [(tile.x, tile.y) for tile in shortestPathTiles]
-        spColor = shortestPathTiles[1].color
-        DrawSquares(axis, spTiles, spColor)
+        DrawSquares(axis, spTiles, PATHCOLOR_Traversed)
     end
 
     axis.aspect = DataAspect() # Makes the y and x axis scaled equally.

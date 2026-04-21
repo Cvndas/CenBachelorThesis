@@ -1,168 +1,102 @@
-module CenAstar
+module Cen
+include("CenAstar.jl")
+using .CenAstar
+using MPI
 
-using GLMakie
-using Colors
-using Makie.Colors
-using Random
-using Dates
-# using Serialization
-include("Utilities.jl")
-include("MapTile.jl")
-include("MazeGenerator.jl")
-include("MakiePlayground.jl")
-include("MakieRenderer.jl")
-include("AStar_Shared.jl")
-include("AStar_SingleThreaded.jl")
-include("MPI_ParallelHierarchicSearch.jl")
-include("MapTile_Functions.jl")
+#= run with
+include("main.jl"); Cen.main_MPI_ParallelHierarchicSearch();
+ =#
+function main_MPI_ParallelHierarchicSearch()
+    # TODO: Enter MPI immediately. 
+    code = quote
 
+        const MasterRank = 0
+        include("CenAstar.jl")
+        using .CenAstar
 
+        using MPI
+        MPI.Init()
+        comm = MPI.COMM_WORLD
+        nranks = MPI.Comm_size(comm)
+        rank = MPI.Comm_rank(comm)
+        host = MPI.Get_processor_name()
+        println("Hello from $host, I am process $rank of $nranks processes!")
 
+        if rank == MasterRank
+            CenAstar.Initialize()
+            println("Entered main_MPI_ParallelHierarchicSearch()")
+            computedMaze::ComputedMaze = ComputeMaze()
+            # allPathsDict = Dict{Tuple{Int,Int},MapTile}()
+            # for mapTile in computedMaze.traversablePaths
+            #     allPathsDict[(mapTile.x, mapTile.y)] = mapTile
+            # end
 
+            shortestPathTiles = CenAstar.MPI_ParallelHierarchicSearch(computedMaze.startTile, computedMaze.endTile, computedMaze.allTiles)
+            attemptedPathTiles = MapTile[]
 
+            println("Path is done. Going to render the maze now.")
+            mazeImage = CenAstar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
 
+            ComputePathCost = path -> sum(tile.costToReach for tile::MapTile in path)
+            mpiPhsCost = ComputePathCost(shortestPathTiles)
 
+            println("\n--- THE RESULTS ---\n")
+            println("MPI PHS found a path with cost $mpiPhsCost")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-function GenerateMapBorders(xMin, xMax, yMin, yMax)
-    mapBorders = MapTile[]
-    for x in xMin-1:xMax+1
-        push!(mapBorders, CreateMapBorder(x, yMin - 1))
-        push!(mapBorders, CreateMapBorder(x, yMax + 1))
-    end
-    for y in yMin:yMax
-        push!(mapBorders, CreateMapBorder(xMin - 1, y))
-        push!(mapBorders, CreateMapBorder(xMax + 1, y))
-    end
-    return mapBorders
-end
-
-
-function FindExistingMapTile(x, y, existingTiles::Array{MapTile})
-    for existingTile in existingTiles
-        if existingTile.x == x && existingTile.y == y
-            return existingTile
+            # TODO: Wait for the master rank to produce the maze. Like a barrier. Or maybe all should produce the maze, then
+            # wait for the barrier.
         end
+
+        MPI.Barrier(comm)
+        println("I'm rank $rank and I'm done with the barrier!")
+
+
+        if rank == MasterRank
+            println("Press enter to exit")
+            readline()
+            # fig = Figure()
+            println("Done with main().")
+        end
+
+        MPI.Finalize()
     end
-    return nothing
+    run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
+
+
 end
 
 
+#= run with
+include("main.jl"); Cen.main_SingleThreadedAStar();
+ =#
+function main_SingleThreadedAStar()
+    CenAstar.Initialize()
 
-struct ComputedMaze
-    startTile::MapTile
-    endTile::MapTile
-    traversablePaths::Array{MapTile}
-    mapBorders::Array{MapTile}
-    wallMapTiles::Array{MapTile}
-    pathMapTiles::Array{MapTile}
-end
-
-function ComputeMaze()::ComputedMaze
-    xMin = 0
-    xMax = 500
-    yMin = 0
-    yMax = 500
-
-    walls = PrimsMazeGenerator(xMin, xMax, yMin, yMax)
-    PunctureHoles!(walls)
-
-    wallMapTiles = [CreateWall(x, y) for (x, y) in walls]
-    println("Generated the walls")
-    pathMapTiles = GeneratePathTiles(walls, xMin, xMax, yMin, yMax)
-    println("Generated the path tiles")
-    mapBorders = GenerateMapBorders(xMin, xMax, yMin, yMax)
-    println("Generated the map borders")
-
-    startTile = FindExistingMapTile(xMin, yMin, pathMapTiles)
-    println("Found the start tile")
-    @assert startTile !== nothing "Start tile wasn't found"
-    endTile = FindExistingMapTile(xMax, yMax, pathMapTiles)
-    println("Found the end tile")
-    @assert endTile !== nothing "End tile wasn't found"
-
-    traversablePaths = [wallMapTiles; pathMapTiles]
-
-    @time LoadNeighbors!(traversablePaths)
-    computedMaze::ComputedMaze = ComputedMaze(startTile, endTile, traversablePaths, mapBorders, wallMapTiles, pathMapTiles)
-    @assert wallMapTiles[1].color == :black "Wall map tiles color was not black: $(wallMapTiles[1].color)"
-    return computedMaze
-end
-
-
-
-
-
-function main()
-    # COMPUTE_MAZE = false
-    # COMPUTE_MAZE = false
-
-    println("Entered main()")
-    seed = 5
-    if seed < 0
-        seed = Int(round(time()))
-        println("Generated a seed based on time")
-    end
-    Random.seed!(seed)
-
+    println("Entered main_SingleThreadedAStar()")
     # if COMPUTE_MAZE
-    println("Timing ComputeMaze()")
-    @time computedMaze::ComputedMaze = ComputeMaze()
+    computedMaze::ComputedMaze = CenAstar.ComputeMaze()
     allPathsDict = Dict{Tuple{Int,Int},MapTile}()
     for mapTile in computedMaze.traversablePaths
         allPathsDict[(mapTile.x, mapTile.y)] = mapTile
     end
 
     println("Going to solve the maze with Single Threaded A*")
-    @time shortestPathTiles_AStar = st_AStar(computedMaze.startTile, computedMaze.endTile)
+    @time shortestPathTiles = CenAstar.st_AStar(computedMaze.startTile, computedMaze.endTile, computedMaze.allTiles)
 
-    @time shortestPathTiles_MPI_PHS = MPI_ParallelHierarchicSearch(computedMaze.startTile, computedMaze.endTile, allPathsDict)
     # @assert computedMaze.wallMapTiles[1].color == :black "Wallmaptiles had wrong color"
     attemptedPathTiles = MapTile[]
 
     println("Path is done. Going to render the maze now.")
-    # mazeImage = ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
+    mazeImage = CenAstar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
     # save("mazeImage.png", mazeImage)
-
+    # TODO: Make ShowMaze return a figure, so I can put them side by side, give them a title, etc.
     ComputePathCost = path -> sum(tile.costToReach for tile::MapTile in path)
-    AStar_Cost = ComputePathCost(shortestPathTiles_AStar)
-    MPI_PH_Cost = ComputePathCost(shortestPathTiles_MPI_PHS)
+    AStar_Cost = ComputePathCost(shortestPathTiles)
 
     println("\n--- THE RESULTS ---\n")
     println("AStar found a path with cost $AStar_Cost")
-    println("MPI Parallel Hierarchic Search found a path with cost $MPI_PH_Cost")
 
     # fig = Figure()
     println("Done with main().")
 end
-
-
-
-
-
-main()
-
-
 end

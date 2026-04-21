@@ -5,15 +5,11 @@ function ConstructPath(endTile::MapTile, startTile::MapTile, cameFrom::Dict{MapT
     path = MapTile[]
     currentPathTile = endTile
     push!(path, currentPathTile)
-    while currentPathTile != (startTile)
+    while currentPathTile !== (startTile)
         currentPathTile = cameFrom[currentPathTile]
         push!(path, currentPathTile)
     end
-    reverse!(path)
-
-    for tile in path
-        ConvertToTraversed!(tile)
-    end
+    # reverse!(path)
 
     return path
 end
