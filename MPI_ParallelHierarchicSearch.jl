@@ -15,11 +15,19 @@ By the time the beautification iteration comes around, much if not all of the ma
 that is necessary for the beautification pass should already be present in the core
 that handles this area of the maze.
 
+To deal with the latency of requesting and receiving new map data, each core will 
+be assigned with two paths to solve. Initially, the core solves path A. If it
+needs more data, it sends a request, then solves path B. After solving B, it 
+returns to path A, at which point it hopefully has the new chunk ready. 
 
+If it is in path B and it needs more data, it returns to path A. If it needs more data in A,
+it returns to B, etc.
+
+After the first user reports needing more tiles to work with, the master should probably
+just permanently double how much it sends to everyone from there onward.
 
 =#
 
-const MASTER_RANK = 0
 
 
 # This is not a smart function. The waypoints, while guaranteed to be reachable, may actually be walls (expensive to break), 
@@ -32,7 +40,7 @@ function GenerateInitialWaypoints(startTile::MapTile, endTile::MapTile, coreCoun
     currentY::Int = startTile.y
     wayPoints::Array{MapTile} = [startTile]
 
-    for i in 1:coreCount-1
+    for i in 1:coreCount-2
         currentX += jumpX
         currentY += jumpY
         wayPoint::MapTile = allTiles[currentX, currentY]
@@ -47,20 +55,96 @@ end
 
 
 
+ComputePathCost = path -> sum(tile.costToReach for tile::MapTile in path)
 
 
-function Test2(startTile::MapTile, endTile::MapTile)
-    println("Test2 succeeded maybe? endTile y is $(endTile.y)")
+
+
+mutable struct MPI_MapData
+    deliveryTiles::Array{MapTile,2}
 end
 
+const INITIAL_DELIVERY = 0
+const INITIAL_WAYPOINTS = 1
+const LOCAL_PATH_DELIVERY = 2
+
+function MPI_PHS_Entry(comm, nranks, rank, host)
+    if rank == 0
+        println("Entered MPI_PHS_Entry()")
+        CenAstar.Initialize() # only initializes the seed, for now.
+        computedMaze::ComputedMaze = ComputeMaze()
+        initialMapData::MPI_MapData = MPI_MapData(computedMaze.allTiles)
+    end
+
+    # Wait for the maze to be generated
+    MPI.Barrier(comm)
+    if rank == 0
+        # TODO: Make this an ISend, of course, to latency hide the landmark computations
+        println("The maze is ready. Rank 0 is sending it to all other cores now.")
+        for recipient in 1:nranks-1
+            MPI.send(initialMapData, comm; dest=recipient, tag=INITIAL_DELIVERY)
+        end
+
+        initialWayPoints::Array{MapTile} = GenerateInitialWaypoints(computedMaze.startTile, computedMaze.endTile, nranks, computedMaze.allTiles)
+        for (i, wayPoint) in enumerate(initialWayPoints)
+            println("Waypoint $i is ($(wayPoint.x), $(wayPoint.y)))")
+        end
+
+        for i in 1:nranks-1
+            MPI.send((initialWayPoints[i], initialWayPoints[i+1]), comm; dest=i, tag=INITIAL_WAYPOINTS)
+            println("Sent waypoints $i and $(i + 1) to recipient $i")
+        end
+
+        localPaths::Array{Array{MapTile,1},1} = Array{Array{MapTile,1},1}()
+        for rank in 1:nranks-1
+            (localPath::Array{MapTile}, status) = MPI.recv(MPI.ANY_SOURCE, LOCAL_PATH_DELIVERY, comm)
+            push!(localPaths, localPath)
+            println("Master rank received a local path with $(length(localPath)) maptiles from $(status.source) with tag $(status.tag)")
+        end
+        println("Master rank received all the local paths that are necessary.")
+        fullPath::Array{MapTile,1} = reduce(vcat, localPaths)
+
+        cost = ComputePathCost(fullPath)
+
+        println("\n--- THE RESULTS ---\n")
+        println("Reconstructed the full path, which has cost $cost")
+
+        _ = CenAstar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, fullPath, MapTile[])
+
+    else
+        (receivedInitialMapData::MPI_MapData, status::MPI.Status) = MPI.recv(0, INITIAL_DELIVERY, comm)
+        println("I'm rank $rank and I received $(length(receivedInitialMapData.deliveryTiles)) tiles from $(status.source), with tag $(status.tag)")
+
+        (receivedInitialWayPoints::Tuple{MapTile,MapTile}, status) = MPI.recv(0, INITIAL_WAYPOINTS, comm)
+        println("I'm rank $rank and I received $(length(receivedInitialWayPoints)) waypoints from $(status.source), with tag $(status.tag)")
+        wayPointA::MapTile = receivedInitialWayPoints[1]
+        wayPointB::MapTile = receivedInitialWayPoints[2]
+        localStartPoint = receivedInitialMapData.deliveryTiles[wayPointA.x, wayPointA.y]
+        localEndPoint = receivedInitialMapData.deliveryTiles[wayPointB.x, wayPointB.y]
+        # IMPORTANT: Pathfinding relies on the references of MapTiles being sourced from the received mapdata, with the waypoints merely serving as
+        # indices into the array
+
+        # Ready to start solving the path.
+        localPath = st_AStar(localStartPoint, localEndPoint, receivedInitialMapData.deliveryTiles)
+        println("I'm rank $rank and I solved my local path. Sending it back to the master core")
+        MPI.send(localPath, comm; dest=0, tag=LOCAL_PATH_DELIVERY)
+        println("I'm rank $rank and I sent back my local path to the master core.")
+    end
 
 
+    if rank == 0
+        println("Press enter to exit")
+        readline()
+        # fig = Figure()
+        println("Done with main().")
+    end
+end
 
 
 
 function SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
 
-    if rank == MASTER_RANK
+    if rank == 0
         CenAstar.Initialize()
         println("Entered main_MPI_ParallelHierarchicSearch()")
         computedMaze::ComputedMaze = ComputeMaze()
@@ -69,13 +153,12 @@ function SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
         #     allPathsDict[(mapTile.x, mapTile.y)] = mapTile
         # end
 
-        shortestPathTiles = MPI_ParallelHierarchicSearch(computedMaze.startTile, computedMaze.endTile, computedMaze.allTiles)
+        shortestPathTiles = SingleThreaded_PHS_ReferenceFunc(computedMaze.startTile, computedMaze.endTile, computedMaze.allTiles)
         attemptedPathTiles = MapTile[]
 
         println("Path is done. Going to render the maze now.")
         mazeImage = CenAstar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
 
-        ComputePathCost = path -> sum(tile.costToReach for tile::MapTile in path)
         mpiPhsCost = ComputePathCost(shortestPathTiles)
 
         println("\n--- THE RESULTS ---\n")
@@ -88,7 +171,7 @@ function SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
     println("I'm rank $rank and I'm done with the barrier! I acknowledge that the maze is ready.")
 
 
-    if rank == MASTER_RANK
+    if rank == 0
         println("Press enter to exit")
         readline()
         # fig = Figure()

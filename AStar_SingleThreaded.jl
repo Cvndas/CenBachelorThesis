@@ -29,10 +29,15 @@ function _fillWithNewNeighbors!(neighbors::Array{MapTile}, currentTile::MapTile,
     end
 end
 
+function DEBUG_CoordinateOnlyCompare(a::MapTile, b::MapTile)
+    return a.x == b.x && a.y == b.y
+end
 
 
 function st_AStar(startTile::MapTile, endTile::MapTile, allTiles::Array{MapTile,2})::Array{MapTile}
     println("Starting the AStar pathfinding")
+
+    @assert allTiles[endTile.x, endTile.y] !== nothing "End tile wasn't in the allTiles matrix. Max x was $(size(allTiles, 1)) and max y was $(size(allTiles, 1))"
 
     xMax = size(allTiles, 1)
     yMax = size(allTiles, 2)
@@ -52,6 +57,10 @@ function st_AStar(startTile::MapTile, endTile::MapTile, allTiles::Array{MapTile,
     while isempty(frontier) == false
         currentTile::MapTile, _ = dequeue_pair!(frontier)
         if currentTile === endTile
+            # if DEBUG_CoordinateOnlyCompare(currentTile, endTile) # TODO: Re-enable if cameFrom[] does not contain the end tile, then debug
+            @assert currentTile.costToReach == endTile.costToReach "Cost to reach mismatch: $(currentTile.costToReach) vs $(endTile.costToReach)"
+            @assert currentTile === endTile "The values were equal, but the reference wasn't."
+            # TODO: Discovered the bug. values are equal, references are not. This causes key missing from cameFrom[] in ConstructPath
             break
         end
 
@@ -66,7 +75,6 @@ function st_AStar(startTile::MapTile, endTile::MapTile, allTiles::Array{MapTile,
             end
         end
     end
-
     println("Done the full pathfinding. Constructing the path now.")
     return ConstructPath(endTile, startTile, cameFrom)
 

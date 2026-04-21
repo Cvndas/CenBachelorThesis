@@ -72,9 +72,9 @@ end
 
 function ComputeMaze()::ComputedMaze
     xMin::Int32 = 1
-    xMax::Int32 = 500
+    xMax::Int32 = 200
     yMin::Int32 = 1
-    yMax::Int32 = 500
+    yMax::Int32 = 200
 
     @assert xMin == 1 # Never Change
     @assert yMin == 1 # Never Change
