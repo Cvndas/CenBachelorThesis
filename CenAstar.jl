@@ -28,6 +28,9 @@ include("AStar_SingleThreaded.jl")
 include("MPI_ParallelHierarchicSearch.jl")
 include("MapTile_Functions.jl")
 
+const MAZE_SIZE_X = 200
+const MAZE_SIZE_Y = 200
+
 #=
 This is a module file. Its purpose is to include the other files that make up CenAstar
 =#
@@ -72,9 +75,9 @@ end
 
 function ComputeMaze()::ComputedMaze
     xMin::Int32 = 1
-    xMax::Int32 = 200
+    xMax::Int32 = MAZE_SIZE_X
     yMin::Int32 = 1
-    yMax::Int32 = 200
+    yMax::Int32 = MAZE_SIZE_Y
 
     @assert xMin == 1 # Never Change
     @assert yMin == 1 # Never Change
