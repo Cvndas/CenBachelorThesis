@@ -1,3 +1,4 @@
+
 module CenAstar
 
 using GLMakie
@@ -27,9 +28,12 @@ include("AStar_SingleThreaded.jl")
 include("MPI_ParallelHierarchicSearch.jl")
 include("MapTile_Functions.jl")
 
+#=
+This is a module file. Its purpose is to include the other files that make up CenAstar
+=#
 
 
-
+# TODO: organize the remaining functions in here into correct files.
 
 function GenerateMapBorders(xMin, xMax, yMin, yMax)
     mapBorders = MapTile[]

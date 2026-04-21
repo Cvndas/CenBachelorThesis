@@ -14,17 +14,19 @@ function main_MPI_ParallelHierarchicSearch()
         using .CenAstar
 
         MPI.Init()
-        comm = MPI.COMM_WORLD
+        comm = MPI.Comm_dup(MPI.COMM_WORLD)
         nranks = MPI.Comm_size(comm)
         rank = MPI.Comm_rank(comm)
         host = MPI.Get_processor_name()
         println("Hello from $host, I am process $rank of $nranks processes!")
-        CenAstar.MPI_PHS_Entry(comm, nranks, rank, host)
+        CenAstar.SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
     end
     run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
 
 
 end
+
+
 
 
 #= run with

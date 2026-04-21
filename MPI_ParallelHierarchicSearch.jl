@@ -1,5 +1,27 @@
 using MPI
 
+#=
+
+The main challenge of this is the fact that memory is not shared across the processors.
+With a shared memory architecture, all cores could efficiently read the full maze.
+With MPI, this is inefficient, and the cores need to receive as small of a chunk of data
+as needed. This is the one major opportunity for optimization.
+
+My idea, for now, is to start with an estimate of what search area each core needs. 
+If the core needs more, it sends a request to the master core, and hopefully receives
+the remaining data within a short enough timeframe.
+
+By the time the beautification iteration comes around, much if not all of the map data
+that is necessary for the beautification pass should already be present in the core
+that handles this area of the maze.
+
+
+
+=#
+
+const MASTER_RANK = 0
+
+
 # This is not a smart function. The waypoints, while guaranteed to be reachable, may actually be walls (expensive to break), 
 # and reaching them may be very expensive. Smoothing is necessary to make the path optimal.
 function GenerateInitialWaypoints(startTile::MapTile, endTile::MapTile, coreCount::Int, allTiles::Array{MapTile,2})
@@ -23,12 +45,20 @@ function GenerateInitialWaypoints(startTile::MapTile, endTile::MapTile, coreCoun
 end
 
 
+
+
+
+
 function Test2(startTile::MapTile, endTile::MapTile)
     println("Test2 succeeded maybe? endTile y is $(endTile.y)")
 end
 
-const MASTER_RANK = 0
-function MPI_PHS_Entry(comm, nranks, rank, host)
+
+
+
+
+
+function SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
 
     if rank == MASTER_RANK
         CenAstar.Initialize()
@@ -50,13 +80,12 @@ function MPI_PHS_Entry(comm, nranks, rank, host)
 
         println("\n--- THE RESULTS ---\n")
         println("MPI PHS found a path with cost $mpiPhsCost")
-
-        # TODO: Wait for the master rank to produce the maze. Like a barrier. Or maybe all should produce the maze, then
-        # wait for the barrier.
     end
 
     MPI.Barrier(comm)
-    println("I'm rank $rank and I'm done with the barrier!")
+    # After the barrier, the maze should be created, but no data from the maze should be shared with any of
+    # the other cores yet.
+    println("I'm rank $rank and I'm done with the barrier! I acknowledge that the maze is ready.")
 
 
     if rank == MASTER_RANK
@@ -69,7 +98,9 @@ function MPI_PHS_Entry(comm, nranks, rank, host)
     MPI.Finalize()
 end
 
-function MPI_ParallelHierarchicSearch(startTile::MapTile, endTile::MapTile, allTiles::Array{MapTile,2})::Array{MapTile}
+
+# A reference function for how the MPI version should behave. Basically pseudocode that can be run.
+function SingleThreaded_PHS_ReferenceFunc(startTile::MapTile, endTile::MapTile, allTiles::Array{MapTile,2})::Array{MapTile}
     println("Starting the MPI Ripple Search algorithm.")
 
 
