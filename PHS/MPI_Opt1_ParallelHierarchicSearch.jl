@@ -39,6 +39,7 @@ const MPI_OPT1_JOB_REQUEST = 3
 # Sent by the worker to the master, upon completing a path
 const MPI_OPT1_PATH_DELIVERY = 4
 
+
 struct MPI_Opt1_Job
     wayPointA::MapTile
     wayPointB::MapTile
@@ -49,10 +50,44 @@ end
 struct MPI_Opt1_JobRequest
     jobA::MPI_Opt1_Job
     jobB::MPI_Opt1_Job
+    # These are delivered alongside the job.
+    maxX::Int32
+    maxY::Int32
 end
 
 
 
+struct MPI_Opt1_MapRequest
+    wayPointA::MapTile
+    wayPointB::MapTile
+    isWayPointA::Bool # used to "level up" how much material the master core will save
+end
+
+
+
+
+
+mutable struct MPI_Opt1_WorkerEntry
+    workerRank::Int
+    workerLevel_A::Int
+    workerLevel_B::Int
+    function MPI_Opt1_WorkerEntry(workerRank::Int)
+        new(workerRank, 1)
+    end
+end
+
+
+function TryLevelUp(allEntries::Dict{Int,MPI_Opt1_WorkerEntry})
+    maxLevel = -1
+    for entry::MPI_Opt1_WorkerEntry in values(allEntries)
+        workerLevel = max(entry.workerLevel_A, entry.workerLevel_b)
+        if workerLevel > maxLevel
+            maxLevel = workerLevel
+        end
+    end
+
+    return maxLevel
+end
 
 
 
@@ -86,9 +121,12 @@ end
 
 
 function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::ComputedMaze)
-    # TODO: Lower this to a small number to test that the technique works
-    verticalEstimationSize::Int32 = 3
-    horizontalExtensionSize::Int32 = 3
+    # TODO: Increase the number when it's all tested to work.
+    verticalEstimationSize_Default::Int32 = 3
+    horizontalExtensionSize_Default::Int32 = 3
+
+    verticalEstimationSize::Int32 = verticalEstimationSize_Default
+    horizontalExtensionSize::Int32 = horizontalExtensionSize_Default
 
     maxX::Int32 = Int32(size(computedMaze.allTiles, 1))
     maxY::Int32 = Int32(size(computedMaze.allTiles, 2))
@@ -105,7 +143,7 @@ function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::Computed
         println("A: $(path[1]) to B: $(path[2])")
     end
 
-
+    # ::: -------------------------:: Sending the initial jobs to the workers ::------------------------- ::: // 
     pendingSends::Vector{MPI.Request} = MPI.Request[]
     for i in 1:length(paths)÷2 # each worker gets two paths.
         @assert i <= nranks - 1 "nranks -1: $(nranks-1), i: $i"
@@ -126,42 +164,128 @@ function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::Computed
 
         workerRank = i
 
-
         # mapDataForWorker::MPI_Opt1_PhsMapData = MPI_Opt1_PhsMapData(both_estimatedNecessaryCells)
         println("The map data for worker $workerRank has $(length(both_estimatedNecessaryCells)) elements")
         push!(pendingSends, MPI.Isend(both_estimatedNecessaryCells, comm; dest=workerRank, tag=MPI_OPT1_MAP_INITIAL_DELIVERY))
 
         jobA::MPI_Opt1_Job = MPI_Opt1_Job(pathA[1], pathB[2])
         jobB::MPI_Opt1_Job = MPI_Opt1_Job(pathB[1], pathB[2])
-        jobsForWorker::MPI_Opt1_JobRequest = MPI_Opt1_JobRequest(jobA, jobB)
+        jobsForWorker::MPI_Opt1_JobRequest = MPI_Opt1_JobRequest(jobA, jobB, maxX, maxY)
         push!(pendingSends, MPI.Isend(jobsForWorker, comm; dest=workerRank, tag=MPI_OPT1_JOB_REQUEST))
     end
 
     println("Sent off all the jobs and mapdata to the workers.")
     for pendingSend::MPI.Request in pendingSends
         status = MPI.Wait(pendingSend, MPI.Status)
-        println("One of the pending sends has been completed::: source: $(status.MPI_SOURCE), tag: $(status.MPI_TAG)")
+        # println("One of the pending sends has been completed::: source: $(status.MPI_SOURCE), tag: $(status.MPI_TAG)")
     end
 
+    # ::: -------------------------:: All workers should be busy now ::------------------------- ::: // 
+    # Let's create the registry
+    workerRecords::Array{MPI_Opt1_WorkerEntry} = MPI_Opt1_WorkerEntry[]
+    for workerRank in 1:nranks-1
+        push!(workerRecords, MPI_Opt1_WorkerEntry(workerRank))
+    end
+
+    allPathsReceived = false
+    while allPathsReceived == false
+        #= 
+        TODO:
+        probe incoming messages
+        see if it's a request for more data (in which case, try leveling up, then send back response)
+
+        =#
+        # TODO: Set status here
+
+        status = MPI.Probe(comm, MPI.Status; source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG)
+        source = MPI.Get_source(status)
+        tag = MPI.Get_tag(status)
+
+        # // ::: -------------------------:: Handling a Map supply request ::------------------------- ::: // 
+        if tag == MPI_OPT1_MAP_REQUEST
+            println("A map request from rank $source is incoming")
+
+            # TODO: This recv syntax is depcratated. Figure out what that's about 
+            # TODO: This is a crash.
+            mapRequest::MPI_Opt1_MapRequest, status = MPI.recv(source, MPI_OPT1_MAP_REQUEST, comm)
+            if mapRequest.isWayPointA
+                workerRecords[source].workerLevel_A += 1
+            else
+                workerRecords[source].workerLevel_B += 1
+            end
+            currentLevel = TryLevelUp(workerRecords)
+            verticalEstimationSize = verticalEstimationSize_Default * currentLevel
+            horizontalExtensionSize = horizontalExtensionSize_Default * currentLevel
+
+        elseif tag == MPI_OPT1_PATH_DELIVERY
+            println("A path delivery from rank $source is incoming")
+        else
+            error("Master received message with tag $tag, which was not expected")
+        end
+
+
+
+        incomingMessageIsRequestForMoreData = true
+        if incomingMessageIsRequestForMoreData
+            @assert incomingRank >= 1 "Worker rank was $incomingRank"
+            incomingRank = status.MPI_SOURCE
+            UpdateRecord(workerRecords[incomingRank], mapRequest)
+        end
+    end
 
 
 
 end
 
+
+
+
+
+
+mutable struct WorkerPathfindingState
+    startTile::MapTile
+    endTile::MapTile
+    frontier::PriorityQueue{MapTile,Int}
+    cameFrom::Dict{MapTile,MapTile}
+    costSoFar::Dict{MapTile,Int}
+    postponed::Bool
+    currentTile::MapTile
+    function WorkerPathfindingState(startTile::MapTile, endTile::MapTile)
+        frontier = PriorityQueue{MapTile,Int}()
+        frontier[startTile] = 0
+
+        cameFrom = Dict{MapTile,MapTile}()
+        cameFrom[startTile] = MapTile(Int32(-99), Int32(-99))
+
+        costSoFar = Dict{MapTile,Int64}()
+        costSoFar[startTile] = 0
+
+        new(startTile, endTile, frontier, cameFrom, costSoFar, false, startTile)
+    end
+end
+
+
+
+
 function MPI_Opt1_WorkerCore(comm, nranks, rank, host)
     # # The first thing we expect is the initial path delivery
+    # The map data is sent first, but we can open up the mailbos for the job request in the meantime
+    initialJobRequest_Ref = Ref{MPI_Opt1_JobRequest}()
+    initialJobRequest_MPIRequest = MPI.Irecv!(initialJobRequest_Ref, comm; source=0, tag=MPI_OPT1_JOB_REQUEST)
 
     initialMapDataDelivery_Status = MPI.Probe(comm, MPI.Status, source=0, tag=MPI_OPT1_MAP_INITIAL_DELIVERY)
     println("Worker $rank has received a probe signal for the initial map delivery")
     mapDataCount = MPI.Get_count(initialMapDataDelivery_Status, MapTile)
     println("Supposedly, the mapdata would have $mapDataCount elements")
     initialMapDataDelivery = Array{MapTile,1}(undef, mapDataCount)
+
+    # I don't know why I can't get this to work with MPI.recv() now. Sad.
+    # Since the probe was blocking, this recv can be blocking too. We already know the data is ready 
     initialMapDataDelivery_MPIRequest = MPI.Irecv!(initialMapDataDelivery, comm; source=0, tag=MPI_OPT1_MAP_INITIAL_DELIVERY)
-
-    initialJobRequest_Ref = Ref{MPI_Opt1_JobRequest}()
-    initialJobRequest_MPIRequest = MPI.Irecv!(initialJobRequest_Ref, comm; source=0, tag=MPI_OPT1_JOB_REQUEST)
-
     MPI.Wait(initialMapDataDelivery_MPIRequest)
+    # status = MPI.Irecv!(initialMapDataDelivery, comm; source=0, tag=MPI_OPT1_MAP_INITIAL_DELIVERY)
+
+
     println("Worker $rank received the initial map data delivery, which has $(length(initialMapDataDelivery)) map tiles")
     if rank == 1
         println("Some samples")
@@ -170,11 +294,77 @@ function MPI_Opt1_WorkerCore(comm, nranks, rank, host)
         end
     end
 
+    #  ::: -------------------------:: Loading the available tiles into the local dict. ::------------------------- ::: // 
+    # probably very slow.
+
+    availableTiles::Dict{Tuple{Int32,Int32},MapTile} = Dict{Tuple{Int32,Int32},MapTile}()
+    for tile::MapTile in initialMapDataDelivery
+        availableTiles[(tile.x, tile.y)] = tile
+    end
+
     MPI.Wait(initialJobRequest_MPIRequest)
     initialJobRequest::MPI_Opt1_JobRequest = initialJobRequest_Ref[]
     jobA::MPI_Opt1_Job = initialJobRequest.jobA
     jobB::MPI_Opt1_Job = initialJobRequest.jobB
-    println("Worker $rank received the initial job request, which has map tiles $(jobA.wayPointA) and $(jobA.wayPointB) for job A, and map tiles $(jobB.wayPointA) and $(jobB.wayPointB) for job B")
+
+    maxX::Int32 = initialJobRequest.maxX
+    maxY::Int32 = initialJobRequest.maxY
+
+    # println("Worker $rank received the initial job request, which has map tiles $(jobA.wayPointA) and $(jobA.wayPointB) for job A, and map tiles $(jobB.wayPointA) and $(jobB.wayPointB) for job B")
+    #=
+    The main job: We're going to try to solve both jobA and jobB. If we don't have the tiles necessary for 
+    solving one, we send a request for more data, and switch to the other.
+    =#
+
+    jobA_startTile = availableTiles[(jobA.wayPointA.x, jobA.wayPointA.y)]
+    jobA_endTile = availableTiles[(jobA.wayPointB.x, jobA.wayPointB.y)]
+
+    jobB_startTile = availableTiles[(jobB.wayPointA.x, jobB.wayPointA.y)]
+    jobB_endTile = availableTiles[(jobB.wayPointB.x, jobB.wayPointB.y)]
+
+    jobAState::WorkerPathfindingState = WorkerPathfindingState(jobA_startTile, jobA_endTile)
+    jobBState::WorkerPathfindingState = WorkerPathfindingState(jobB_startTile, jobB_endTile)
+
+    jobASolved = false
+    jobBSolved = false
+    while !jobASolved || !jobBSolved
+        jobA_solveResult = AStar_MPI_Opt1(availableTiles, maxX, maxY, jobAState)
+        if jobA_solveResult === nothing
+            # TODO
+            println("Worker $rank needs more data to solve its local path for job A.")
+            sendReq = SendMapRequest(jobAState, true, comm)
+            jobAState.postponed = true
+        else
+            println("worker $rank created a local path of length $(length(jobA_solveResult))")
+            jobASolved = true
+        end
+
+        # Check if Job B's supplement has come in the mail yet 
+        if jobBState.postponed
+            ReceiveAndProcessMapRequest!(availableTiles, comm)
+            println("Worker $rank has received its JobB map supplement")
+        end
+
+        jobB_solveResult = AStar_MPI_Opt1(availableTiles, maxX, maxY, jobBState)
+        if jobB_solveResult === nothing
+            println("Worker $rank needs more data to solve its local path for job B.")
+            sendReq = SendMapRequest(jobBState, false, comm)
+            jobBState.postponed = true
+        else
+            println("worker $rank created a local path of length $(length(jobB_solveResult))")
+            jobBSolved = true
+        end
+
+        # Check if Job A's supplement has come in the mail yet.
+        if jobAState.postponed
+            ReceiveAndProcessMapRequest!(availableTiles, comm)
+            println("Worker $rank has received its JobA map supplement")
+        end
+    end
+
+    # TODO: Job C and D, the beautification pass
+
+
 
     println("Worker $rank is done.")
 end
@@ -182,9 +372,157 @@ end
 
 
 
-# TODO: A custom A* parallel search, that uses dictionary instead of matrix array, and 
-# which allows for an abort, saving the state, and returning later
 
+function SendMapRequest(jobState::WorkerPathfindingState, isWayPointA::Bool, comm)::MPI.Request
+    mapRequest::MPI_Opt1_MapRequest = MPI_Opt1_MapRequest(jobState.startTile, jobState.endTile, isWayPointA)
+    sendRequest::MPI.Request = MPI.Isend(mapRequest, comm, dest=0, tag=MPI_OPT1_MAP_REQUEST)
+    return sendRequest
+end
+
+
+
+# TODO: Implement
+function ReceiveAndProcessMapRequest!(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, comm)
+    mapSupplyStatus = MPI.Probe(comm, MPI.Status, source=0, tag=MPI_OPT1_MAP_RESPONSE_DELIVERY)
+    incomingTilesSize = MPI.Get_count(mapSupplyStatus, MPI.Status)
+
+    mapSupplyDelivery = Array{MapTile,1}(undef, incomingTilesSize)
+
+    # I don't know why I can't get this to work with MPI.recv() now. Sad.
+    # Since the probe was blocking, this recv can be blocking too. We already know the data is ready 
+    incomingSupplyRequest = MPI.Irecv!(mapSupplyDelivery, comm; source=0, tag=MPI_OPT1_MAP_RESPONSE_DELIVERY)
+    MPI.Wait(incomingSupplyRequest)
+
+    println("A worker received a new batch of tiles, with $(length(mapSupplyDelivery)) tiles.")
+
+    # TODO: This is slow. Think of a smarter way of doing this.
+    for suppliedTile::MapTile in mapSupplyDelivery
+        if haskey(availableTiles, (suppliedTile.x, suppliedTile.y)) == false
+            availableTiles[(suppliedTile.x, suppliedTile.y)] = suppliedTile
+        end
+    end
+end
+
+
+
+
+
+
+
+
+
+# // ::: -------------------------:: PATHFINDING ::------------------------- ::: // 
+#
+#
+#
+#
+function AStar_MPI_Opt1(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, maxX::Int32, maxY::Int32, state::WorkerPathfindingState)::Union{Array{MapTile},Nothing}
+
+    # Declaring this outside so it doesn't get re-allocated every iteration
+    neighbors::Array{MapTile} = MapTile[]
+
+    function AStar_MPI_Opt1_GetNeighbors!()::Bool
+        # Returns nothing when a tile is missing, and the master core needs to supply it for us.
+        empty!(neighbors)
+        northY = state.currentTile.y + 1
+        if northY <= maxY
+            northX = state.currentTile.x
+            north = get(availableTiles, (northX, northY), nothing)
+            if north === nothing
+                println("Failed to find the northtile with ($northX, $northY)")
+                return false
+            end
+            push!(neighbors, north)
+        end
+
+        eastX = state.currentTile.x + 1
+        if eastX <= maxX
+            eastY = state.currentTile.y
+            east = get(availableTiles, (eastX, eastY), nothing)
+            if east === nothing
+                println("Failed to find the easttile with ($eastX, $eastY)")
+                return false
+            end
+            push!(neighbors, east)
+        end
+
+        southY = state.currentTile.y - 1
+        if southY >= 1
+            southX = state.currentTile.x
+            south = get(availableTiles, (southX, southY), nothing)
+            if south === nothing
+                println("Failed to find the southtile with ($southX, $southY)")
+                return false
+            end
+            push!(neighbors, south)
+        end
+
+        westX = state.currentTile.x - 1
+        if westX >= 1
+            westY = state.currentTile.y
+            west = get(availableTiles, (westX, westY), nothing)
+            if west === nothing
+                println("Failed to find the westtile with ($westX, $westY)")
+                return false
+            end
+            push!(neighbors, west)
+        end
+
+        return true
+    end
+
+    foundEnd = false
+
+    while isempty(state.frontier) == false
+        if state.postponed == true
+            state.postponed = false
+        else
+            state.currentTile::MapTile, _ = dequeue_pair!(state.frontier)
+        end
+
+        if state.currentTile === state.endTile
+            foundEnd = true
+            break
+        end
+
+        neighborTilesExist = AStar_MPI_Opt1_GetNeighbors!()
+        # This means "The Tile exists, but we haven't received it from the master core yet.
+        if neighborTilesExist == false
+            println("Failed to find an essential neighbor. Returning nothing from the MPI astar alg")
+            return nothing
+        end
+
+        for neighbor::MapTile in neighbors
+            newCost = state.costSoFar[state.currentTile]
+            if !haskey(state.costSoFar, neighbor) || newCost < state.costSoFar[neighbor]
+                state.costSoFar[neighbor] = newCost
+                priority = newCost + _heuristic(neighbor, state.endTile)
+                state.frontier[neighbor] = priority
+                state.cameFrom[neighbor] = state.currentTile
+            end
+        end
+    end
+
+    @assert foundEnd == true "Didn't find end, but got to the ConstructPath part regardless."
+
+
+    return ConstructPath(state.endTile, state.startTile, state.cameFrom)
+end
+
+
+
+
+
+
+
+
+
+
+
+
+# // ::: -------------------------:: Map Gathering ::------------------------- ::: // 
+#
+#
 #=
 Idea: Take each point along the diagonal, and an arbitrary number of tiles above and below those diagonals.
 Also extend this slightly to the left and the right.
