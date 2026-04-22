@@ -48,6 +48,8 @@ const MPI_OPT1_JOB_REQUEST = 3
 # Sent by the worker to the master, upon completing a path
 const MPI_OPT1_PATH_DELIVERY_A = 4
 const MPI_OPT1_PATH_DELIVERY_B = 5
+const MPI_OPT1_PATH_DELIVERY_C = 6
+const MPI_OPT1_PATH_DELIVERY_D = 7
 
 
 # // ::: -------------------------:: Structs ::------------------------- ::: // 
@@ -142,6 +144,22 @@ mutable struct MasterState
 end
 
 
+
+mutable struct WorkerState
+    comm
+    rank
+    availableTiles::Dict{Tuple{Int32,Int32},MapTile}
+
+    maxX::Int32
+    maxY::Int32
+
+    jobAState::WorkerPathfindingState
+    jobBState::WorkerPathfindingState
+end
+
+
+
+
 # // ::: -------------------------:: Miscellanious Functions ::------------------------- ::: // 
 #
 #
@@ -181,48 +199,10 @@ function AllPathsAreReceived(workerRecords::Array{MPI_Opt1_WorkerEntry})
 end
 
 
-function SendCompletedPath(solvedPath::Array{MapTile}, pathId, comm)
-    # // ::: -------------------------:: Setting the tag ::------------------------- ::: // 
-    if pathId == :pathA
-        tag = MPI_OPT1_PATH_DELIVERY_A
-    else
-        @assert pathId == :pathB
-        tag = MPI_OPT1_PATH_DELIVERY_B
-    end
-
-    MPI.Isend(solvedPath, comm, dest=0, tag=tag)
-end
 
 
-function SendMapRequest(jobState::WorkerPathfindingState, isWayPointA::Bool, comm)::MPI.Request
-    mapRequest::MPI_Opt1_MapRequest = MPI_Opt1_MapRequest(jobState.startTile, jobState.endTile, isWayPointA)
-    sendRequest::MPI.Request = MPI.Isend(mapRequest, comm, dest=0, tag=MPI_OPT1_MAP_REQUEST)
-    return sendRequest
-end
 
 
-function ReceiveAndProcessMapRequest!(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, comm, rank)
-
-    mapSupplyStatus = MPI.Probe(comm, MPI.Status, source=0, tag=MPI_OPT1_MAP_RESPONSE_DELIVERY)
-    incomingTilesSize = MPI.Get_count(mapSupplyStatus, MapTile)
-    println("Worker $rank has received a probe signal for a map supplement\n Supposedly, the mapdata will have $incomingTilesSize elements")
-
-    mapSupplyDelivery = Array{MapTile,1}(undef, incomingTilesSize)
-
-    # I don't know why I can't get this to work with MPI.recv() now. Sad.
-    # Since the probe was blocking, this recv can be blocking too. We already know the data is ready 
-    incomingSupplyRequest = MPI.Irecv!(mapSupplyDelivery, comm; source=0, tag=MPI_OPT1_MAP_RESPONSE_DELIVERY)
-    MPI.Wait(incomingSupplyRequest)
-
-    println("Worker $rank received a new batch of tiles, with $(length(mapSupplyDelivery)) tiles.")
-
-    # TODO: This is slow. Think of a smarter way of doing this. (READ THE OPTIMIZATION AT TOP OF FILE)
-    for suppliedTile::MapTile in mapSupplyDelivery
-        if haskey(availableTiles, (suppliedTile.x, suppliedTile.y)) == false
-            availableTiles[(suppliedTile.x, suppliedTile.y)] = suppliedTile
-        end
-    end
-end
 
 
 
@@ -453,9 +433,50 @@ end
 
 
 
+function Worker_SendMapRequest(jobState::WorkerPathfindingState, isWayPointA::Bool, comm)::MPI.Request
+    mapRequest::MPI_Opt1_MapRequest = MPI_Opt1_MapRequest(jobState.startTile, jobState.endTile, isWayPointA)
+    sendRequest::MPI.Request = MPI.Isend(mapRequest, comm, dest=0, tag=MPI_OPT1_MAP_REQUEST)
+    return sendRequest
+end
 
 
-function MPI_Opt1_WorkerCore(comm, nranks, rank, host)
+function Worker_SendCompletedPath(solvedPath::Array{MapTile}, TAG_TO_USE, comm)
+    MPI.Isend(solvedPath, comm, dest=0, tag=TAG_TO_USE)
+end
+
+
+
+
+function Worker_ReceiveAndProcessMapRequest!(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, comm, rank)
+
+    mapSupplyStatus = MPI.Probe(comm, MPI.Status, source=0, tag=MPI_OPT1_MAP_RESPONSE_DELIVERY)
+    incomingTilesSize = MPI.Get_count(mapSupplyStatus, MapTile)
+    println("Worker $rank has received a probe signal for a map supplement\n Supposedly, the mapdata will have $incomingTilesSize elements")
+
+    mapSupplyDelivery = Array{MapTile,1}(undef, incomingTilesSize)
+
+    # I don't know why I can't get this to work with MPI.recv() now. Sad.
+    # Since the probe was blocking, this recv can be blocking too. We already know the data is ready 
+    incomingSupplyRequest = MPI.Irecv!(mapSupplyDelivery, comm; source=0, tag=MPI_OPT1_MAP_RESPONSE_DELIVERY)
+    MPI.Wait(incomingSupplyRequest)
+
+    println("Worker $rank received a new batch of tiles, with $(length(mapSupplyDelivery)) tiles.")
+
+    # TODO: This is slow. Think of a smarter way of doing this. (READ THE OPTIMIZATION AT TOP OF FILE)
+    for suppliedTile::MapTile in mapSupplyDelivery
+        if haskey(availableTiles, (suppliedTile.x, suppliedTile.y)) == false
+            availableTiles[(suppliedTile.x, suppliedTile.y)] = suppliedTile
+        end
+    end
+end
+
+
+function Worker_ReceiveBeautificationJobs!(w::WorkerState)
+    println("Pretend that worker $(w.rank) just received some beautification jobs")
+end
+
+
+function Worker_ReceiveInitialMapDataAndJobs(comm, rank)::WorkerState
     # # The first thing we expect is the initial path delivery
     # The map data is sent first, but we can open up the mailbos for the job request in the meantime
     initialJobRequest_Ref = Ref{MPI_Opt1_JobRequest}()
@@ -467,22 +488,12 @@ function MPI_Opt1_WorkerCore(comm, nranks, rank, host)
 
     initialMapDataDelivery = Array{MapTile,1}(undef, mapDataCount)
 
-    # I don't know why I can't get this to work with MPI.recv() now. Sad.
-    # Since the probe was blocking, this recv can be blocking too. We already know the data is ready 
     initialMapDataDelivery_MPIRequest = MPI.Irecv!(initialMapDataDelivery, comm; source=0, tag=MPI_OPT1_MAP_INITIAL_DELIVERY)
     MPI.Wait(initialMapDataDelivery_MPIRequest)
 
     println("Worker $rank received the initial map data delivery, which has $(length(initialMapDataDelivery)) map tiles")
-    if rank == 1
-        println("Some samples")
-        for i in 1:5
-            println(initialMapDataDelivery[i])
-        end
-    end
 
-    #  ::: -------------------------:: Loading the available tiles into the local dict. ::------------------------- ::: // 
-    # probably very slow.
-
+    # This is probably very slow.
     availableTiles::Dict{Tuple{Int32,Int32},MapTile} = Dict{Tuple{Int32,Int32},MapTile}()
     for tile::MapTile in initialMapDataDelivery
         availableTiles[(tile.x, tile.y)] = tile
@@ -496,68 +507,87 @@ function MPI_Opt1_WorkerCore(comm, nranks, rank, host)
     maxX::Int32 = initialJobRequest.maxX
     maxY::Int32 = initialJobRequest.maxY
 
-    # println("Worker $rank received the initial job request, which has map tiles $(jobA.wayPointA) and $(jobA.wayPointB) for job A, and map tiles $(jobB.wayPointA) and $(jobB.wayPointB) for job B")
-    #=
-    The main job: We're going to try to solve both jobA and jobB. If we don't have the tiles necessary for 
-    solving one, we send a request for more data, and switch to the other.
-    =#
-
     jobA_startTile = availableTiles[(jobA.wayPointA.x, jobA.wayPointA.y)]
     jobA_endTile = availableTiles[(jobA.wayPointB.x, jobA.wayPointB.y)]
 
     jobB_startTile = availableTiles[(jobB.wayPointA.x, jobB.wayPointA.y)]
     jobB_endTile = availableTiles[(jobB.wayPointB.x, jobB.wayPointB.y)]
 
-    println("Worker $rank will solve path A: ($(jobA_startTile), $(jobA_endTile)) and path B: ($(jobB_startTile), $(jobB_endTile))")
     jobAState::WorkerPathfindingState = WorkerPathfindingState(jobA_startTile, jobA_endTile)
     jobBState::WorkerPathfindingState = WorkerPathfindingState(jobB_startTile, jobB_endTile)
 
-    jobASolved = false
-    jobBSolved = false
+    w::WorkerState = WorkerState(comm, rank, availableTiles, maxX, maxY, jobAState, jobBState)
+    return w
+end
+
+
+
+
+
+function Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobBCompletionTag)
+    jobASolved::Bool = false
+    jobBSolved::Bool = false
+
+    println("Worker $(w.rank) will solve paths ($(w.jobAState.startTile), $(w.jobAState.endTile)) and  ($(w.jobBState.startTile), $(w.jobBState.endTile))")
     while !jobASolved || !jobBSolved
-        jobA_solveResult = AStar_MPI_Opt1(availableTiles, maxX, maxY, jobAState)
+        jobA_solveResult = AStar_MPI_Opt1(w.availableTiles, w.maxX, w.maxY, w.jobAState)
         if jobA_solveResult === nothing
 
-            println("Worker $rank needs more data to solve its local path for job A.")
-            sendReq = SendMapRequest(jobAState, true, comm)
-            jobAState.postponed = true
+            println("Worker $(w.rank) needs more data to solve its local path for job A.")
+            sendReq = Worker_SendMapRequest(w.jobAState, true, w.comm)
+            w.jobAState.postponed = true
         else
-            println("worker $rank created a local path of length $(length(jobA_solveResult))")
+            println("worker $(w.rank) created a local path of length $(length(jobA_solveResult))")
             jobASolved = true
-            SendCompletedPath(jobA_solveResult, :pathA, comm)
-            println("Worker $rank sent back a path that starts at $(jobA_solveResult[end]) and ends at $(jobA_solveResult[1])")
+            Worker_SendCompletedPath(jobA_solveResult, jobACompletionTag, w.comm)
+            println("Worker $(w.rank) sent back a path that starts at $(jobA_solveResult[end]) and ends at $(jobA_solveResult[1])")
         end
 
         # Check if Job B's supplement has come in the mail yet 
-        if jobBState.postponed
-            ReceiveAndProcessMapRequest!(availableTiles, comm, rank)
-            println("Worker $rank has received its JobB map supplement")
+        if w.jobBState.postponed
+            Worker_ReceiveAndProcessMapRequest!(w.availableTiles, w.comm, w.rank)
+            println("Worker $(w.rank) has received its JobB map supplement")
         end
 
-        jobB_solveResult = AStar_MPI_Opt1(availableTiles, maxX, maxY, jobBState)
+        jobB_solveResult = AStar_MPI_Opt1(w.availableTiles, w.maxX, w.maxY, w.jobBState)
         if jobB_solveResult === nothing
-            println("Worker $rank needs more data to solve its local path for job B.")
-            sendReq = SendMapRequest(jobBState, false, comm)
-            jobBState.postponed = true
+            println("Worker $(w.rank) needs more data to solve its local path for job B.")
+            sendReq = Worker_SendMapRequest(w.jobBState, false, w.comm)
+            w.jobBState.postponed = true
         else
-            println("worker $rank created a local path of length $(length(jobB_solveResult))")
+            println("worker $(w.rank) created a local path of length $(length(jobB_solveResult))")
             jobBSolved = true
-            SendCompletedPath(jobB_solveResult, :pathB, comm)
-            println("Worker $rank sent back a path that starts at $(jobB_solveResult[end]) and ends at $(jobB_solveResult[1])")
+            Worker_SendCompletedPath(jobB_solveResult, jobBCompletionTag, w.comm)
+            println("Worker $(w.rank) sent back a path that starts at $(jobB_solveResult[end]) and ends at $(jobB_solveResult[1])")
         end
 
         # Check if Job A's supplement has come in the mail yet.
-        if jobAState.postponed
-            ReceiveAndProcessMapRequest!(availableTiles, comm, rank)
-            println("Worker $rank has received its JobA map supplement")
+        if w.jobAState.postponed
+            Worker_ReceiveAndProcessMapRequest!(w.availableTiles, w.comm, w.rank)
+            println("Worker $(w.rank) has received its JobA map supplement")
         end
     end
 
+end
+
+
+
+
+function MPI_Opt1_WorkerCore(comm, nranks, rank, host)
+    w::WorkerState = Worker_ReceiveInitialMapDataAndJobs(comm, rank)
+
+
+    Worker_CompleteJobPair(w, MPI_OPT1_PATH_DELIVERY_A, MPI_OPT1_PATH_DELIVERY_B)
+
     # TODO: Job C and D, the beautification pass
+    # The master core needs to recognize that this worker completed both paths, and immediately provide new jobs
+    # The tricky part will be figuring out how to handle the last 
+    # worker, who will have a longer path. Although this will be transparent for the worker.
 
-
-
-    println("Worker $rank is done.")
+    println("Worker $(w.rank) is done.")
+    Worker_ReceiveBeautificationJobs!(w)
+    # TODO: Enable this when the master core sends the new deliveries and they're actually received
+    # Worker_CompleteJobPair(w, MPI_OPT1_PATH_DELIVERY_C, MPI_OPT1_PATH)DELIVERY_D
 end
 
 
