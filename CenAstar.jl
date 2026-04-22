@@ -32,8 +32,8 @@ include("PHS/MPI_Opt1_ParallelHierarchicSearch.jl")
 include("PHS/PHS_Shared.jl")
 include("PHS/ST_ParallelHierarchicSearch.jl")
 
-const MAZE_SIZE_X = 120
-const MAZE_SIZE_Y = 120
+const MAZE_SIZE_X = 500
+const MAZE_SIZE_Y = 500
 
 #=
 This is a module file. Its purpose is to include the other files that make up CenAstar

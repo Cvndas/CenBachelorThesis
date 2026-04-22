@@ -23,6 +23,14 @@ This is definitely a major flaw of the Julia programming language / MPI interfac
 be something you decide as a programmer when the safety outweighs the inconvenience of locking yourself out of
 modifying your own data. Might write about this in the thesis. 
 
+TODO: An optimization that is not yet implemented
+Currently, when a request is made for more path data, it sends a larger chunk of tiles, which includes
+tiles that were previously sent. There's an efficient way to store which tiles have already been sent, however.
+This can be done with a [mazewidth x 2] array, where each column stores the highest and lowest values that
+were sent for that x position. This way, the master core doesn't have to store (close to) a copy of
+the entire map just to remember wihch tiles it has already sent, i.e. which ones it can omit in the next
+supply.
+
 =#
 # Sent by master core for the initial delivery of map data, before any jobs are posted.
 const MPI_OPT1_MAP_INITIAL_DELIVERY = 0
@@ -149,8 +157,8 @@ end
 
 function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::ComputedMaze)
     # TODO: Increase the number when it's all tested to work.
-    verticalEstimationSize_Default::Int32 = 300
-    horizontalExtensionSize_Default::Int32 = 300
+    verticalEstimationSize_Default::Int32 = 3
+    horizontalExtensionSize_Default::Int32 = 3
     currentLevel = 1
 
     verticalEstimationSize::Int32 = verticalEstimationSize_Default
@@ -250,6 +258,8 @@ function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::Computed
 
             verticalEstimationSize = verticalEstimationSize_Default * currentLevel^2
             horizontalExtensionSize = horizontalExtensionSize_Default * currentLevel^2
+
+            # TODO: Optimization, described on top
 
             supplementMapTiles::Array{MapTile,1} =
                 GetEstimatedNecessaryCells(mapRequest.wayPointA, mapRequest.wayPointB, computedMaze.allTiles, verticalEstimationSize, horizontalExtensionSize, maxX, maxY)

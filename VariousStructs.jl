@@ -4,7 +4,7 @@ import Base: show
 mutable struct MutableMapTile
     x::Int32
     y::Int32
-    costToReach::Int16
+    costToReach::Int8
 
     function MutableMapTile(x::Int32, y::Int32; costToReach=1)
         new(x, y, costToReach)
@@ -15,7 +15,7 @@ end
 struct MapTile
     x::Int32
     y::Int32
-    costToReach::Int16
+    costToReach::Int8
     function MapTile(x::Int32, y::Int32; costToReach=1)
         new(x, y, costToReach)
     end
