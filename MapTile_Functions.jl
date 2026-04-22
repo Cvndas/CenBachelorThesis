@@ -13,7 +13,7 @@ const PATHCOLOR_Water = :blue
 const PATHCOLOR_Mud = :brown
 const PATHCOLOR_BoostPad = :orange
 const PATHCOLOR_MapBorder = :silver
-
+const PATHCOLOR_WayPoint = :dodgerblue
 
 function CreateWall(x::Int32, y::Int32)
     return MutableMapTile(x, y, costToReach=PATHCOST_Wall)

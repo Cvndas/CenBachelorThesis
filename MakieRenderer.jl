@@ -61,7 +61,8 @@ function ShowMaze(
     pathMapTiles::Array{MapTile},
     mapBorderTiles::Array{MapTile},
     shortestPathTiles::Array{MapTile},
-    attemptedPathTiles::Array{MapTile})
+    attemptedPathTiles::Array{MapTile};
+    wayPoints::Array{MapTile}=MapTile[])
 
     fig = Figure(; size=(1600, 900))
     axis = Axis(fig[1, 1])
@@ -110,6 +111,11 @@ function ShowMaze(
     if !isempty(shortestPathTiles)
         spTiles = [(tile.x, tile.y) for tile in shortestPathTiles]
         DrawSquares(axis, spTiles, PATHCOLOR_Traversed)
+    end
+
+    if !isempty(wayPoints)
+        wayPoints = [(tile.x, tile.y) for tile in wayPoints]
+        DrawSquares(axis, wayPoints, PATHCOLOR_WayPoint)
     end
 
     axis.aspect = DataAspect() # Makes the y and x axis scaled equally.
