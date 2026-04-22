@@ -15,6 +15,14 @@ The A* pathfinding algorithm is modified to use a dictionary to find neighboring
 save the state of the pathfinding process on that path, in case it needs to request more data
 and come back later.
 
+Some notes:
+I had to do a big refactor to make MapTile an immutable structs, as instances of mutable structs are
+never isbits() compatible, which Isend() REQUIRES (regular send() does not)
+
+This is definitely a major flaw of the Julia programming language / MPI interface. Mutable vs Immutable should
+be something you decide as a programmer when the safety outweighs the inconvenience of locking yourself out of
+modifying your own data. Might write about this in the thesis. 
+
 =#
 # Sent by master core for the initial delivery of map data, before any jobs are posted.
 const MPI_OPT1_MAP_INITIAL_DELIVERY = 0
@@ -31,24 +39,20 @@ const MPI_OPT1_JOB_REQUEST = 3
 # Sent by the worker to the master, upon completing a path
 const MPI_OPT1_PATH_DELIVERY = 4
 
-mutable struct MPI_Opt1_Job
+struct MPI_Opt1_Job
     wayPointA::MapTile
     wayPointB::MapTile
 end
 
 
 
-mutable struct MPI_Opt1_JobRequest
+struct MPI_Opt1_JobRequest
     jobA::MPI_Opt1_Job
     jobB::MPI_Opt1_Job
 end
 
 
 
-
-# mutable struct MPI_Opt1_PhsMapData
-#     mapDelivery::Array{MapTile,1}
-# end
 
 
 
@@ -77,6 +81,10 @@ function MPI_Opt1_PhsEntry(comm, nranks, rank, host)
     end
 end
 
+
+
+
+
 function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::ComputedMaze)
     # TODO: Lower this to a small number to test that the technique works
     verticalEstimationSize::Int32 = 3
@@ -86,7 +94,7 @@ function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::Computed
     maxY::Int32 = Int32(size(computedMaze.allTiles, 2))
 
     # Let's first generate some waypoints, as these determine what data the workers need
-    wayPoints::Array{MapTile} = GenerateInitialWaypoints(computedMaze.startTile, computedMaze.endTile, nranks * 2, computedMaze.allTiles)
+    wayPoints::Array{MapTile} = GenerateInitialWaypoints(computedMaze.startTile, computedMaze.endTile, (nranks - 1) * 2, computedMaze.allTiles)
     paths::Vector{Tuple{MapTile,MapTile}} = Tuple{MapTile,MapTile}[]
     for i in 1:length(wayPoints)-1
         push!(paths, (wayPoints[i], wayPoints[i+1]))
@@ -97,8 +105,10 @@ function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::Computed
         println("A: $(path[1]) to B: $(path[2])")
     end
 
+
     pendingSends::Vector{MPI.Request} = MPI.Request[]
-    for i in 1:length(paths)-2
+    for i in 1:length(paths)÷2 # each worker gets two paths.
+        @assert i <= nranks - 1 "nranks -1: $(nranks-1), i: $i"
         pathA = paths[i]
         pathA_estimatedNecessaryCells::Array{MapTile,1} =
             GetEstimatedNecessaryCells(pathA[1], pathA[2], computedMaze.allTiles, verticalEstimationSize, horizontalExtensionSize, maxX, maxY)
@@ -108,7 +118,6 @@ function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::Computed
             GetEstimatedNecessaryCells(pathB[1], pathB[2], computedMaze.allTiles, verticalEstimationSize, horizontalExtensionSize, maxX, maxY)
 
         both_estimatedNecessaryCells::Array{MapTile,1} = unique(vcat(pathA_estimatedNecessaryCells, pathB_estimatedNecessaryCells))
-        # @assert isbits(both_estimatedNecessaryCells) "initial map data was not bits"
 
         println("Created the necessary cells for paths $i and $(i+1) which has length $(length(both_estimatedNecessaryCells))")
         # if i == 1
@@ -117,22 +126,20 @@ function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::Computed
 
         workerRank = i
 
+
         # mapDataForWorker::MPI_Opt1_PhsMapData = MPI_Opt1_PhsMapData(both_estimatedNecessaryCells)
         println("The map data for worker $workerRank has $(length(both_estimatedNecessaryCells)) elements")
-        # push!(pendingSends, MPI.Isend(both_estimatedNecessaryCells, comm; dest=workerRank, tag=MPI_OPT1_MAP_INITIAL_DELIVERY))
-        MPI.send(both_estimatedNecessaryCells, comm; dest=workerRank, tag=MPI_OPT1_MAP_INITIAL_DELIVERY)
+        push!(pendingSends, MPI.Isend(both_estimatedNecessaryCells, comm; dest=workerRank, tag=MPI_OPT1_MAP_INITIAL_DELIVERY))
 
         jobA::MPI_Opt1_Job = MPI_Opt1_Job(pathA[1], pathB[2])
         jobB::MPI_Opt1_Job = MPI_Opt1_Job(pathB[1], pathB[2])
         jobsForWorker::MPI_Opt1_JobRequest = MPI_Opt1_JobRequest(jobA, jobB)
-        # push!(pendingSends, MPI.Isend(jobsForWorker, comm; dest=workerRank, tag=MPI_OPT1_JOB_REQUEST))
+        push!(pendingSends, MPI.Isend(jobsForWorker, comm; dest=workerRank, tag=MPI_OPT1_JOB_REQUEST))
     end
 
     println("Sent off all the jobs and mapdata to the workers.")
     for pendingSend::MPI.Request in pendingSends
-        MPI.Wait(pendingSend)
-        (completed, status) = MPI.Test(pendingSend)
-        @assert completed == true "Somehow completed was false after calling .Wait() on it"
+        status = MPI.Wait(pendingSend, MPI.Status)
         println("One of the pending sends has been completed::: source: $(status.MPI_SOURCE), tag: $(status.MPI_TAG)")
     end
 
@@ -143,23 +150,33 @@ end
 
 function MPI_Opt1_WorkerCore(comm, nranks, rank, host)
     # # The first thing we expect is the initial path delivery
-    # initialMapDataDelivery_Ref = Ref{MPI_Opt1_PhsMapData}()
-    # initialMapDataDelivery_MPIRequest = MPI.Irecv!(initialMapDataDelivery_Ref, comm; source=0, tag=MPI_OPT1_MAP_INITIAL_DELIVERY)
 
-    # initialJobRequest_Ref = Ref{MPI_Opt1_JobRequest}()
-    # initialJobRequest_MPIRequest = MPI.Irecv!(initialJobDelivery_Ref, comm; source=0, tag=MPI_OPT1_JOB_REQUEST)
+    initialMapDataDelivery_Status = MPI.Probe(comm, MPI.Status, source=0, tag=MPI_OPT1_MAP_INITIAL_DELIVERY)
+    println("Worker $rank has received a probe signal for the initial map delivery")
+    mapDataCount = MPI.Get_count(initialMapDataDelivery_Status, MapTile)
+    println("Supposedly, the mapdata would have $mapDataCount elements")
+    initialMapDataDelivery = Array{MapTile,1}(undef, mapDataCount)
+    initialMapDataDelivery_MPIRequest = MPI.Irecv!(initialMapDataDelivery, comm; source=0, tag=MPI_OPT1_MAP_INITIAL_DELIVERY)
 
-    # MPI.Wait(initialMapDataDelivery_MPIRequest)
-    # initialMapDataDelivery::MPI_Opt1_PhsMapData = initialMapDataDelivery_Ref[] # dereference it 
-    # println("Worker $rank received the initial map data delivery, which has $(length(initialMapDataDelivery.mapDelivery)) map tiles")
+    initialJobRequest_Ref = Ref{MPI_Opt1_JobRequest}()
+    initialJobRequest_MPIRequest = MPI.Irecv!(initialJobRequest_Ref, comm; source=0, tag=MPI_OPT1_JOB_REQUEST)
 
-    # MPI.Wait(initialJobRequest_MPIRequest)
-    # initialJobRequest::MPI_Opt1_JobRequest = initialJobRequest_Ref[]
-    # jobA::MPI_Opt1_Job = initialJobRequest.jobA
-    # jobB::MPI_Opt1_Job = initialJobRequest.jobB
-    # println("Worker $rank received the initial job request, which has map tiles $(jobA.wayPointA) and $(jobA.wayPointB) for job A, and map tiles $(jobB.wayPointA) and $(jobB.wayPointB) for job B")
+    MPI.Wait(initialMapDataDelivery_MPIRequest)
+    println("Worker $rank received the initial map data delivery, which has $(length(initialMapDataDelivery)) map tiles")
+    if rank == 1
+        println("Some samples")
+        for i in 1:5
+            println(initialMapDataDelivery[i])
+        end
+    end
 
-    # println("Worker $rank is done.")
+    MPI.Wait(initialJobRequest_MPIRequest)
+    initialJobRequest::MPI_Opt1_JobRequest = initialJobRequest_Ref[]
+    jobA::MPI_Opt1_Job = initialJobRequest.jobA
+    jobB::MPI_Opt1_Job = initialJobRequest.jobB
+    println("Worker $rank received the initial job request, which has map tiles $(jobA.wayPointA) and $(jobA.wayPointB) for job A, and map tiles $(jobB.wayPointA) and $(jobB.wayPointB) for job B")
+
+    println("Worker $rank is done.")
 end
 
 
