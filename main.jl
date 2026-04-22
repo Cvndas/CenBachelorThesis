@@ -16,6 +16,7 @@ include("main.jl"); Cen.main_MPI_ParallelHierarchicSearch();
 function main_MPI_ParallelHierarchicSearch()
     # TODO: Enter MPI immediately. 
     Clear()
+    println("Started main()")
     code = quote
         using MPI
         include("CenAstar.jl")
@@ -27,7 +28,8 @@ function main_MPI_ParallelHierarchicSearch()
         rank = MPI.Comm_rank(comm)
         host = MPI.Get_processor_name()
         println("Hello from $host, I am process $rank of $nranks processes!")
-        CenAstar.MPI_PHS_Entry(comm, nranks, rank, host)
+        CenAstar.MPI_Naive_PhsEntry(comm, nranks, rank, host)
+        # CenAstar.MPI_Opt1_PhsEntry(comm, nranks, rank, host)
         # CenAstar.SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
         MPI.Finalize()
     end

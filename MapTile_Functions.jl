@@ -16,75 +16,41 @@ const PATHCOLOR_MapBorder = :silver
 
 
 function CreateWall(x::Int32, y::Int32)
-    return MapTile(x, y, costToReach=PATHCOST_Wall)
+    return MutableMapTile(x, y, costToReach=PATHCOST_Wall)
 end
 
 function CreateDefault(x::Int32, y::Int32)
-    return MapTile(x, y, costToReach=PATHCOST_Default)
+    return MutableMapTile(x, y, costToReach=PATHCOST_Default)
 end
 
 function CreateMapBorder(x::Int32, y::Int32)
-    return MapTile(x, y, costToReach=PATHCOST_Border)
+    return MutableMapTile(x, y, costToReach=PATHCOST_Border)
 end
 
 
-function ConvertToDefault!(mapTile::MapTile)
-    mapTile.costToReach = PATHCOST_Default
+function ConvertToDefault!(mapTile::MutableMapTile)
+    MutableMapTile.costToReach = PATHCOST_Default
 end
 
 
 
-function ConvertToWater!(mapTile::MapTile)
+function ConvertToWater!(mapTile::MutableMapTile)
     mapTile.costToReach = PATHCOST_Water
 end
 
-function ConvertToMud!(mapTile::MapTile)
+function ConvertToMud!(mapTile::MutableMapTile)
     mapTile.costToReach = PATHCOST_Mud
 end
 
-function ConvertToBoostPad!(mapTile::MapTile)
+function ConvertToBoostPad!(mapTile::MutableMapTile)
     mapTile.costToReach = PATHCOST_BoostPad
 end
 
 
 
-function LoadNeighbors!(tiles::Array{MapTile})
-    @assert false "Don't use this function. Don't have references to tiles within tiles."
-    allTilesDict = Dict{Tuple{Int,Int},MapTile}()
-    for mapTile::MapTile in tiles
-        allTilesDict[(mapTile.x, mapTile.y)] = mapTile
-    end
-    println("Loaded up the dict with $(length(tiles)) potential neighbors")
-
-    for mapTile::MapTile in tiles
-        northKey = (mapTile.x, mapTile.y + 1)
-        northTile = get(allTilesDict, northKey, nothing)
-        if northTile !== nothing
-            push!(mapTile.neighbors, northTile)
-        end
-
-        eastKey = (mapTile.x + 1, mapTile.y)
-        eastTile = get(allTilesDict, eastKey, nothing)
-        if eastTile !== nothing
-            push!(mapTile.neighbors, eastTile)
-        end
-
-        southKey = (mapTile.x, mapTile.y - 1)
-        southTile = get(allTilesDict, southKey, nothing)
-        if southTile !== nothing
-            push!(mapTile.neighbors, southTile)
-        end
-
-        westKey = (mapTile.x - 1, mapTile.y)
-        westTile = get(allTilesDict, westKey, nothing)
-        if westTile !== nothing
-            push!(mapTile.neighbors, westTile)
-        end
-    end
-end
 
 
-function PlaceBlob!(allTilesDict::Dict{Tuple{Int32,Int32},MapTile}, x::Int32, y::Int32, size::Int32, identifier)
+function PlaceBlob!(allTilesDict::Dict{Tuple{Int32,Int32},MutableMapTile}, x::Int32, y::Int32, size::Int32, identifier)
 
 
     blobXMin::Int32 = x - (size ÷ 2)
@@ -93,7 +59,7 @@ function PlaceBlob!(allTilesDict::Dict{Tuple{Int32,Int32},MapTile}, x::Int32, y:
     blobYMin::Int32 = y - (size ÷ 2)
     blobYMax::Int32 = y + (size ÷ 2)
 
-    tilesToModify = MapTile[]
+    tilesToModify = MutableMapTile[]
     for x in blobXMin:blobXMax, y in blobYMin:blobYMax
         tileToModify = get(allTilesDict, (x, y), nothing)
         # tileToModify = FindExistingMapTile(x, y, pathTiles)
@@ -122,7 +88,7 @@ end
 
 
 
-function PlaceBlobs(pathMapTiles::Array{MapTile}, xMin::Int32, xMax::Int32, yMin::Int32, yMax::Int32, identifier)
+function PlaceBlobs(pathMapTiles::Array{MutableMapTile}, xMin::Int32, xMax::Int32, yMin::Int32, yMax::Int32, identifier)
 
     maxBlobDivider = if identifier == :DirtBlob
         100
@@ -155,8 +121,8 @@ function PlaceBlobs(pathMapTiles::Array{MapTile}, xMin::Int32, xMax::Int32, yMin
 
     println("Going to place $blobCount blobs of $identifier")
 
-    allTilesDict = Dict{Tuple{Int32,Int32},MapTile}()
-    for mapTile::MapTile in pathMapTiles
+    allTilesDict = Dict{Tuple{Int32,Int32},MutableMapTile}()
+    for mapTile::MutableMapTile in pathMapTiles
         allTilesDict[(mapTile.x, mapTile.y)] = mapTile
     end
 
@@ -174,7 +140,7 @@ end
 
 function GeneratePathTiles(walls::Array{Tuple{Int32,Int32}}, xMin::Int32, xMax::Int32, yMin::Int32, yMax::Int32)
     println("Going to create default map tiles for everything that is not a wall")
-    pathMapTiles = MapTile[]
+    pathMapTiles = MutableMapTile[]
     wallsSet = Set{Tuple{Int32,Int32}}()
     for wall in walls
         push!(wallsSet, wall)

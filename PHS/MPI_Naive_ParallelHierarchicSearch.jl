@@ -30,38 +30,19 @@ just permanently double how much it sends to everyone from there onward.
 
 
 
-# This is not a smart function. The waypoints, while guaranteed to be reachable, may actually be walls (expensive to break), 
-# and reaching them may be very expensive. Smoothing is necessary to make the path optimal.
-function GenerateInitialWaypoints(startTile::MapTile, endTile::MapTile, coreCount::Int, allTiles::Array{MapTile,2})
-    jumpX::Int = abs((endTile.x - startTile.x)) ÷ coreCount
-    jumpY::Int = abs((endTile.y - startTile.y)) ÷ coreCount
-
-    currentX::Int = startTile.x
-    currentY::Int = startTile.y
-    wayPoints::Array{MapTile} = [startTile]
-
-    for i in 1:coreCount-2
-        currentX += jumpX
-        currentY += jumpY
-        wayPoint::MapTile = allTiles[currentX, currentY]
-        push!(wayPoints, wayPoint)
-    end
-
-    push!(wayPoints, endTile)
-
-    return wayPoints
-end
 
 
 
 
-ComputePathCost = path -> sum(tile.costToReach for tile::MapTile in path)
 
 
 
 
-mutable struct MPI_MapData
-    deliveryTiles::Array{MapTile,2}
+
+
+
+mutable struct MPI_Naive_PhsMapData
+    deliveryTiles::Array{MapTile,2} # Nothing, so that the worker cores can see if they have access to the element or not
     startPoint::Union{MapTile,Nothing}
     endPoint::Union{MapTile,Nothing}
 end
@@ -90,15 +71,16 @@ The A* pathfinding algorithm does reference comparisons on MapTiles. All maptile
 taken from the grand deliveryTiles field, with startPoint and endPoint being used only to query into that matrix.
 =#
 
-function MPI_PHS_NaiveMaster(comm, nranks, rank, host, initialMapData::MPI_MapData, computedMaze)
+function MPI_Naive_PhsMasterCore(comm, nranks, rank, host, initialMapData::MPI_Naive_PhsMapData, computedMaze)
     # TODO: Make this an ISend, of course, to latency hide the landmark computations
     println("The maze is ready. Rank 0 is sending it to all other cores now.")
     for recipient in 1:nranks-1
         MPI.send(initialMapData, comm; dest=recipient, tag=INITIAL_DELIVERY)
+        # @assert isbits(initialMapData) "initialMapData was not bits"
     end
 
     # ::: -------------------------:: Generating the initial waypoints ::------------------------- ::: // 
-    initialWayPoints::Array{MapTile} = GenerateInitialWaypoints(computedMaze.startTile, computedMaze.endTile, nranks - 1, computedMaze.allTiles)
+    initialWayPoints::Array{MapTile} = GenerateInitialWaypoints(computedMaze.startTile, computedMaze.endTile, nranks, computedMaze.allTiles)
     for (i, wayPoint) in enumerate(initialWayPoints)
         println("Waypoint $i is ($(wayPoint.x), $(wayPoint.y)))")
     end
@@ -171,9 +153,11 @@ end
 
 
 
-function MPI_PHS_NaiveWorker(comm, nranks, rank, host)
+
+
+function MPI_Naive_PhsWorkerCore(comm, nranks, rank, host)
     # ::: -------------------------:: Receiving the map data ::------------------------- ::: // 
-    (initialMapData::MPI_MapData, status::MPI.Status) = MPI.recv(0, INITIAL_DELIVERY, comm)
+    (initialMapData::MPI_Naive_PhsMapData, status::MPI.Status) = MPI.recv(0, INITIAL_DELIVERY, comm)
     println("I'm rank $rank and I received $(length(initialMapData.deliveryTiles)) tiles from $(status.source), with tag $(status.tag)")
 
     # ::: -------------------------:: Receiving the initial waypoints ::------------------------- ::: // 
@@ -213,7 +197,7 @@ end
 
 
 
-function MPI_PHS_NaiveLastWorker(comm, nranks, rank, host)
+function MPI_Naive_PhsLastWorker(comm, nranks, rank, host)
     # // ::: -------------------------:: Receiving the map ::------------------------- ::: // 
     (initialMapData, status) = MPI.recv(0, INITIAL_DELIVERY, comm)
     println("I'm rank $rank and I received $(length(initialMapData.deliveryTiles)) tiles from $(status.source), with tag $(status.tag)")
@@ -240,23 +224,23 @@ end
 
 
 
-function MPI_PHS_Entry(comm, nranks, rank, host)
+function MPI_Naive_PhsEntry(comm, nranks, rank, host)
     if rank == 0
-        println("Entered MPI_PHS_Entry()")
+        println("Entered MPI_Naive_PhsEntry()")
         CenAstar.Initialize() # only initializes the seed, for now.
         computedMaze::ComputedMaze = ComputeMaze()
-        initialMapData::MPI_MapData = MPI_MapData(computedMaze.allTiles, nothing, nothing)
+        initialMapData::MPI_Naive_PhsMapData = MPI_Naive_PhsMapData(computedMaze.allTiles, nothing, nothing)
     end
 
     # Wait for the maze to be generated
     MPI.Barrier(comm)
 
     if rank == 0
-        MPI_PHS_NaiveMaster(comm, nranks, rank, host, initialMapData, computedMaze)
+        MPI_Naive_PhsMasterCore(comm, nranks, rank, host, initialMapData, computedMaze)
     elseif rank < (nranks - 1)
-        MPI_PHS_NaiveWorker(comm, nranks, rank, host)
+        MPI_Naive_PhsWorkerCore(comm, nranks, rank, host)
     else
-        MPI_PHS_NaiveLastWorker(comm, nranks, rank, host)
+        MPI_Naive_PhsLastWorker(comm, nranks, rank, host)
     end
 
     if rank == 0
@@ -269,122 +253,6 @@ end
 
 
 
-
-
-function SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
-
-    if rank == 0
-        CenAstar.Initialize()
-        println("Entered main_MPI_ParallelHierarchicSearch()")
-        computedMaze::ComputedMaze = ComputeMaze()
-        # allPathsDict = Dict{Tuple{Int,Int},MapTile}()
-        # for mapTile in computedMaze.traversablePaths
-        #     allPathsDict[(mapTile.x, mapTile.y)] = mapTile
-        # end
-
-        shortestPathTiles = SingleThreaded_PHS_ReferenceFunc(computedMaze.startTile, computedMaze.endTile, computedMaze.allTiles)
-        attemptedPathTiles = MapTile[]
-
-        println("Path is done. Going to render the maze now.")
-        mazeImage = CenAstar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
-
-        mpiPhsCost = ComputePathCost(shortestPathTiles)
-
-        println("\n--- THE RESULTS ---\n")
-        println("MPI PHS found a path with cost $mpiPhsCost")
-    end
-
-    MPI.Barrier(comm)
-    # After the barrier, the maze should be created, but no data from the maze should be shared with any of
-    # the other cores yet.
-    println("I'm rank $rank and I'm done with the barrier! I acknowledge that the maze is ready.")
-
-
-    if rank == 0
-        println("Press enter to exit")
-        readline()
-        # fig = Figure()
-        println("Done with main().")
-    end
-
-    MPI.Finalize()
-end
-
-
-
-
-
-
-
-# A reference function for how the MPI version should behave. Basically pseudocode that can be run.
-function SingleThreaded_PHS_ReferenceFunc(startTile::MapTile, endTile::MapTile, allTiles::Array{MapTile,2})::Array{MapTile}
-    println("Starting the MPI Ripple Search algorithm.")
-
-
-    # ::: -------------------------:: SETUP ::------------------------- ::: 
-    # Hard-coding this for now
-    coreCount::Int = 4
-    # ::: -------------------------:: END OF SETUP ::------------------------- ::: 
-
-
-
-    # ::: -------------------------:: GENERATING INITIAL WAYPOINTS ::------------------------- ::: 
-    wayPoints::Array{MapTile} = GenerateInitialWaypoints(startTile, endTile, coreCount, allTiles)
-    for (i, wayPoint) in enumerate(wayPoints)
-        println("Waypoint $(i): x:$(wayPoint.x), y:$(wayPoint.y)")
-    end
-    # ::: -------------------------:: END OF GENERATING INITIAL WAYPOINTS ::------------------------- ::: 
-
-    #=
-    TODO IDEA:
-    Sending the entire maze to all participants could be very expensive. Maybe send only a chunk that is
-    likely to be necessary. If more is required, send more chunks, or expand the existing chunk
-    =#
-
-    # ::: -------------------------:: SOLVING INITIAL PATH ::------------------------- ::: 
-    localPaths = Array{Array{MapTile},1}()
-    for i in 1:length(wayPoints)-1
-        localStartTile = wayPoints[i]
-        localEndTile = wayPoints[i+1]
-
-        push!(localPaths, st_AStar(localStartTile, localEndTile, allTiles))
-    end
-    # ::: -------------------------:: END OF SOLVING INITIAL PATH ::------------------------- ::: 
-
-
-
-
-    # ::: -------------------------:: BEAUTIFICATION ::------------------------- ::: 
-    beautificationWaypoints = [startTile]
-    GetMiddlePoint = function (path::Array{MapTile})
-        middleIndex = length(path) ÷ 2
-        @assert typeof(middleIndex) == Int "middleIndex had wrong type"
-        return path[middleIndex]
-    end
-    for path in localPaths
-        push!(beautificationWaypoints, GetMiddlePoint(path))
-    end
-    push!(beautificationWaypoints, endTile)
-
-    # The beautification waypoints produced one more waypoint than there was before.
-    beautifiedLocalPaths = Array{Array{MapTile},1}()
-    for i in 1:length(beautificationWaypoints)-1
-        localStartTile = beautificationWaypoints[i]
-        localEndTile = beautificationWaypoints[i+1]
-        push!(beautifiedLocalPaths, st_AStar(localStartTile, localEndTile, allTiles))
-    end
-    # ::: -------------------------:: END OF BEAUTIFICATION ::------------------------- ::: 
-
-
-
-
-    # ::: -------------------------:: FINAL PROCESSING ::------------------------- :::
-    beautifiedFullPath::Array{MapTile} = reduce(vcat, beautifiedLocalPaths)
-    fullPath::Array{MapTile} = reduce(vcat, localPaths)
-
-    return beautifiedFullPath
-    return fullPath
-end
 
 
 
