@@ -149,8 +149,8 @@ end
 
 function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::ComputedMaze)
     # TODO: Increase the number when it's all tested to work.
-    verticalEstimationSize_Default::Int32 = 3
-    horizontalExtensionSize_Default::Int32 = 3
+    verticalEstimationSize_Default::Int32 = 300
+    horizontalExtensionSize_Default::Int32 = 300
     currentLevel = 1
 
     verticalEstimationSize::Int32 = verticalEstimationSize_Default
@@ -166,22 +166,28 @@ function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::Computed
         push!(paths, (wayPoints[i], wayPoints[i+1]))
     end
 
-    println("The following paths were created")
+    println("\nThe following paths were created: \n+++ +++ +++ ")
     for path in paths
         println("A: $(path[1]) to B: $(path[2])")
     end
+    println("+++ +++ +++\n")
 
     # ::: -------------------------:: Sending the initial jobs to the workers ::------------------------- ::: // 
     pendingSends::Vector{MPI.Request} = MPI.Request[]
-    for i in 1:length(paths)÷2 # each worker gets two paths.
-        @assert i <= nranks - 1 "nranks -1: $(nranks-1), i: $i"
-        pathA = paths[i]
+    pathIndex = 1
+    @assert length(paths) == 2 * (nranks - 1)
+    for i in 1:nranks-1 # for each rank
+        # BUG HERE: sending the wrong paths
+        # @assert i <= nranks - 1 "nranks -1: $(nranks-1), i: $i"
+        pathA = paths[pathIndex]
         pathA_estimatedNecessaryCells::Array{MapTile,1} =
             GetEstimatedNecessaryCells(pathA[1], pathA[2], computedMaze.allTiles, verticalEstimationSize, horizontalExtensionSize, maxX, maxY)
+        pathIndex += 1
 
-        pathB = paths[i+1]
+        pathB = paths[pathIndex]
         pathB_estimatedNecessaryCells::Array{MapTile,1} =
             GetEstimatedNecessaryCells(pathB[1], pathB[2], computedMaze.allTiles, verticalEstimationSize, horizontalExtensionSize, maxX, maxY)
+        pathIndex += 1
 
         both_estimatedNecessaryCells::Array{MapTile,1} = unique(vcat(pathA_estimatedNecessaryCells, pathB_estimatedNecessaryCells))
 
@@ -196,7 +202,7 @@ function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::Computed
         println("The map data for worker $workerRank has $(length(both_estimatedNecessaryCells)) elements")
         push!(pendingSends, MPI.Isend(both_estimatedNecessaryCells, comm; dest=workerRank, tag=MPI_OPT1_MAP_INITIAL_DELIVERY))
 
-        jobA::MPI_Opt1_Job = MPI_Opt1_Job(pathA[1], pathB[2])
+        jobA::MPI_Opt1_Job = MPI_Opt1_Job(pathA[1], pathA[2])
         jobB::MPI_Opt1_Job = MPI_Opt1_Job(pathB[1], pathB[2])
         jobsForWorker::MPI_Opt1_JobRequest = MPI_Opt1_JobRequest(jobA, jobB, maxX, maxY)
         push!(pendingSends, MPI.Isend(jobsForWorker, comm; dest=workerRank, tag=MPI_OPT1_JOB_REQUEST))
@@ -242,8 +248,8 @@ function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::Computed
                 println("The currentLevel after the map request was received is now $currentLevel, and previously was $levelBefore")
             end
 
-            verticalEstimationSize = verticalEstimationSize_Default * currentLevel
-            horizontalExtensionSize = horizontalExtensionSize_Default * currentLevel
+            verticalEstimationSize = verticalEstimationSize_Default * currentLevel^2
+            horizontalExtensionSize = horizontalExtensionSize_Default * currentLevel^2
 
             supplementMapTiles::Array{MapTile,1} =
                 GetEstimatedNecessaryCells(mapRequest.wayPointA, mapRequest.wayPointB, computedMaze.allTiles, verticalEstimationSize, horizontalExtensionSize, maxX, maxY)
@@ -277,6 +283,10 @@ function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::Computed
     fullPath_Initial::Array{MapTile,1} = reduce(vcat, initialPaths)
     cost_Initial = ComputePathCost(fullPath_Initial)
     println("Reconstructed the initial full path, which has cost $cost_Initial")
+    # for tile in fullPath_Initial
+    #     print("($(tile.x), $(tile.y)), ")
+    # end
+    # println("")
     _ = CenAstar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, fullPath_Initial, MapTile[])
 
 end
@@ -329,7 +339,7 @@ function MPI_Opt1_WorkerCore(comm, nranks, rank, host)
 
     initialMapDataDelivery_Status = MPI.Probe(comm, MPI.Status, source=0, tag=MPI_OPT1_MAP_INITIAL_DELIVERY)
     mapDataCount = MPI.Get_count(initialMapDataDelivery_Status, MapTile)
-    println("Worker $rank has received a probe signal for the initial map delivery\nSupposedly, the mapdata would have $mapDataCount elements")
+    println("Worker $rank has received a probe signal for the initial map delivery\nThe mapdata will have $mapDataCount elements")
 
     initialMapDataDelivery = Array{MapTile,1}(undef, mapDataCount)
 
@@ -374,6 +384,7 @@ function MPI_Opt1_WorkerCore(comm, nranks, rank, host)
     jobB_startTile = availableTiles[(jobB.wayPointA.x, jobB.wayPointA.y)]
     jobB_endTile = availableTiles[(jobB.wayPointB.x, jobB.wayPointB.y)]
 
+    println("Worker $rank will solve path A: ($(jobA_startTile), $(jobA_endTile)) and path B: ($(jobB_startTile), $(jobB_endTile))")
     jobAState::WorkerPathfindingState = WorkerPathfindingState(jobA_startTile, jobA_endTile)
     jobBState::WorkerPathfindingState = WorkerPathfindingState(jobB_startTile, jobB_endTile)
 
@@ -382,7 +393,7 @@ function MPI_Opt1_WorkerCore(comm, nranks, rank, host)
     while !jobASolved || !jobBSolved
         jobA_solveResult = AStar_MPI_Opt1(availableTiles, maxX, maxY, jobAState)
         if jobA_solveResult === nothing
-            # TODO
+
             println("Worker $rank needs more data to solve its local path for job A.")
             sendReq = SendMapRequest(jobAState, true, comm)
             jobAState.postponed = true
@@ -390,6 +401,7 @@ function MPI_Opt1_WorkerCore(comm, nranks, rank, host)
             println("worker $rank created a local path of length $(length(jobA_solveResult))")
             jobASolved = true
             SendCompletedPath(jobA_solveResult, :pathA, comm)
+            println("Worker $rank sent back a path that starts at $(jobA_solveResult[end]) and ends at $(jobA_solveResult[1])")
         end
 
         # Check if Job B's supplement has come in the mail yet 
@@ -407,6 +419,7 @@ function MPI_Opt1_WorkerCore(comm, nranks, rank, host)
             println("worker $rank created a local path of length $(length(jobB_solveResult))")
             jobBSolved = true
             SendCompletedPath(jobB_solveResult, :pathB, comm)
+            println("Worker $rank sent back a path that starts at $(jobB_solveResult[end]) and ends at $(jobB_solveResult[1])")
         end
 
         # Check if Job A's supplement has come in the mail yet.
@@ -440,7 +453,7 @@ function ReceiveAndProcessMapRequest!(availableTiles::Dict{Tuple{Int32,Int32},Ma
 
     mapSupplyStatus = MPI.Probe(comm, MPI.Status, source=0, tag=MPI_OPT1_MAP_RESPONSE_DELIVERY)
     incomingTilesSize = MPI.Get_count(mapSupplyStatus, MapTile)
-    println("Worker $rank has received a probe signal for a map supplement\n Supposedly, the mapdata would have $incomingTilesSize elements")
+    println("Worker $rank has received a probe signal for a map supplement\n Supposedly, the mapdata will have $incomingTilesSize elements")
 
     # println("Going to wait for the thing to come in soon")
     mapSupplyDelivery = Array{MapTile,1}(undef, incomingTilesSize)
@@ -550,7 +563,7 @@ function AStar_MPI_Opt1(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, maxX::
         end
 
         for neighbor::MapTile in neighbors
-            newCost = state.costSoFar[state.currentTile]
+            newCost = state.costSoFar[state.currentTile] + neighbor.costToReach
             if !haskey(state.costSoFar, neighbor) || newCost < state.costSoFar[neighbor]
                 state.costSoFar[neighbor] = newCost
                 priority = newCost + _heuristic(neighbor, state.endTile)
