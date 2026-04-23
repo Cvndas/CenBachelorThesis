@@ -37,6 +37,24 @@ of times that an empty map supplement is delivered, to see if this is a truly a 
 is because when the worker works on jobA, requests data, then works on jobB, misses data for jobB, it may not
 know that perhaps the missing tiles from jobB were already on the way from the previous jobA supplement request.
 
+# TODO Other optimizations
+Currently, I have a few parts in the code that behave like blocking MPI sends and receives, but currently
+they're handled via Isend and Irecv with blocking funcs following right after. This is because I had some
+trouble getting these functions to work with my data, despite doing it with blocking funcs in the naive 
+implementation, and having those same structs and arrays working just fine there. Anyway, I'm just trying 
+to say that many of the Isend and Irecv's should be given another look
+
+Similarly, the ordering in which things happen could be adjusted for better performance. For example,
+the last worker currently solves the longest path in the beautification stage. The long path exists
+due to beautification producing a number of paths that is not divisible by the number of workers. 
+Should this task perhaps be delegated to the first worker, who is perhaps more likely to be done the
+soonest? This should be benchmarked. 
+
+In a similar vein, pathA is currenlty attempted to be solved before pathB, even though pathB
+is more important than pathA, as pathB's are required for the next worker to start with beautification. This is, 
+again, something that needs to be checked.
+
+
 
 # TODO: Features
 - GetEstimatedNecessaryCells probably still doesn't support waypointB being below waypointA. Go through it and see 
@@ -47,6 +65,8 @@ know that perhaps the missing tiles from jobB were already on the way from the p
 - The number of times that empty messages are sent
 - How much mapdata is eventually sent to each worker compared to the full map data
 - How often new mapdata is requested during the beautification phase, when no latency hiding exists to compensate
+- How often pathA is solved before pathB, or vice versa
+- Which worker usually solves its initial paths first
 
 As for benchmarks
 - Single threaded vs MPI accuracy

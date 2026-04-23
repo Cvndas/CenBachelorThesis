@@ -14,7 +14,6 @@ end
 include("main.jl"); Cen.main_MPI_ParallelHierarchicSearch();
  =#
 function main_MPI_ParallelHierarchicSearch()
-    # TODO: Enter MPI immediately. 
     Clear()
     println("Started main()")
     code = quote
