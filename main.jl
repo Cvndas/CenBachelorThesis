@@ -33,7 +33,8 @@ function main_MPI_ParallelHierarchicSearch()
         # CenAstar.SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
         MPI.Finalize()
     end
-    run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 8 julia --project=. -e $code`)
+    # run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
     # run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
     # run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
 
@@ -77,4 +78,6 @@ function main_SingleThreadedAStar()
     # fig = Figure()
     println("Done with main().")
 end
+
+#Module Cen End
 end

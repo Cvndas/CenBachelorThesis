@@ -7,14 +7,19 @@ The first attempt at creating an optimized MPI Parallel Hierarchic Search (Opt1)
 # TODO: Implement the plan
 The master core provides parts of the map to its workers. Each worker first receives the mapdata
 that is expected to be necessary. If it is insufficient, the worker requests more.
-
 Each worker solves two paths. If a worker needs to request more mapdata to solve one of its
 paths, then instead of passively waiting for the new data to come in, it starts solving its other
 path.
 
 The A* pathfinding algorithm is modified to use a dictionary to find neighboring tiles, and to
 save the state of the pathfinding process on that path, in case it needs to request more data
-and come back later.
+and come back later. I assume that the dictionary vs table lookup drawback produces a significant slowdown.
+This can be tested later.
+
+During the beautification stage, almost all the data should already be available from creating the initial
+paths. Therefore, the switching between path A and path B in the initial stage won't be necessary, and thus 
+the beautification step can involve one path for each core. Splitting the beautification paths into two
+would reduce the effectiveness of the beautification.
 
 Some notes:
 I had to do a big refactor to make MapTile an immutable structs, as instances of mutable structs are
@@ -32,10 +37,6 @@ were sent for the column in that x position. This way, the master core doesn't h
 the entire map just to remember wihch tiles it has already sent, i.e. which ones it can omit in the next
 supply.
 
-Idea: 
-During the beautification stage, almost all the data should already be available. Therefore, the switching
-between path A and path B in the initial stage won't be necessary, and thus the beautification step can involve
-one path for each core
 
 =#
 # Sent by master core for the initial delivery of map data, before any jobs are posted.
@@ -251,6 +252,7 @@ end
 
 # A function that took quite a few calories to write
 function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile, allTiles::Array{MapTile,2}, verticalEstimationSize::Int32, horizontalExtensionSize::Int32, maxX::Int32, maxY::Int32)::Array{MapTile,1}
+    # TODO: Support this for when wayPointB is BELOW or to the LEFT of wayPointA. Will need some adjustments to the math
     println("~~~Going to get the estimated necessary cells for a path between $wayPointA and $wayPointB")
     println("~~~Vertical estimation size: $verticalEstimationSize, horizontalExtensionSize: $horizontalExtensionSize")
 
@@ -327,7 +329,6 @@ Idea: Take each point along the diagonal, and an arbitrary number of tiles above
 Also extend this slightly to the left and the right.
 =#
 function OLD_MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile, allTiles::Array{MapTile,2}, verticalEstimationSize::Int32, horizontalExtension::Int32, maxX::Int32, maxY::Int32)::Array{MapTile,1}
-    # TODO: Support this for when wayPointB is BELOW or to the LEFT of wayPointA. Will need some adjustments to the math
     @assert wayPointA.x <= wayPointB.x && wayPointA.y <= wayPointB.y "WaypointB being below or to the left of wayPoint A is not yet supported"
     estimatedNecessaryCells = MapTile[]
     estimatedNecessaryCells_Coordinates = Tuple{Int32,Int32}[]
@@ -718,19 +719,13 @@ end
 function MPI_Opt1_WorkerCore(comm, nranks, rank, host)
     w::WorkerState = MPI_OPT1_Worker_ReceiveInitialMapDataAndJobs(comm, rank)
 
-
     MPI_OPT1_Worker_CompleteJobPair(w, MPI_OPT1_PATH_DELIVERY_A, MPI_OPT1_PATH_DELIVERY_B)
 
-    # TODO: Job C and D, the beautification pass
-    # The master core needs to recognize that this worker completed both paths, and immediately provide new jobs
-    # The tricky part will be figuring out how to handle the last 
-    # worker, who will have a longer path. Although this will be transparent for the worker.
-
     println("Worker $(w.rank) is done with the initial job... Waiting for the beautification job...")
+
     MPI_OPT1_Worker_ReceiveBeautificationJobs!(w)
-    # TODO: Enable this when the master core sends the new deliveries and they're actually received
-    # Worker_CompleteJobPair(w, MPI_OPT1_PATH_DELIVERY_C, MPI_OPT1_PATH_DELIVERY_D
     MPI_OPT1_Worker_CompleteBeautyJob(w)
+
     println("::: ::: ::: Worker $(w.rank) should now be working on its beautification job")
 end
 
