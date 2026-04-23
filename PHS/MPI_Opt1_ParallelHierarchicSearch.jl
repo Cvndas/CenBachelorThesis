@@ -202,6 +202,10 @@ function MPI_OPT1_WorkerCompletedInitialJob(workerEntry::MPI_Opt1_WorkerEntry)
     return workerEntry.solvedPathA !== nothing && workerEntry.solvedPathB !== nothing
 end
 
+function MPI_OPT1_WorkerCompletedPathBOfInitialJob(workerEntry::MPI_Opt1_WorkerEntry)
+    return workerEntry.solvedPathB !== nothing
+end
+
 
 function MPI_OPT1_UpdateRecord(record::MPI_Opt1_WorkerEntry, mapRequest::MPI_Opt1_MapRequest)
     if mapRequest.isWayPointA
@@ -455,7 +459,7 @@ end
 
 function MPI_OPT1_SendBeautificationJob(s::MasterState, source)
     if source > 1
-        @assert MPI_OPT1_WorkerCompletedInitialJob(s.workerEntries[source-1]) "Previous worker was not done yet"
+        @assert MPI_OPT1_WorkerCompletedPathBOfInitialJob(s.workerEntries[source-1]) "Previous worker was not done yet"
     end
 
     #=
@@ -535,31 +539,34 @@ function MPI_OPT1_Master_HandleIncomingInitialSolvedPath(s::MasterState, status:
     and wake him up, or see he is not ready yet. Then that worker will eventually see
     the current worker is done, and ... etc. etc. I'm convinced this process is correct
     =#
-    bothPathsReceived::Bool = MPI_OPT1_WorkerCompletedInitialJob(s.workerEntries[source])
-    if bothPathsReceived
-        println("Master core: Worker $source completed path A and B")
 
-        # If this is the first worker, always start the beautification process
+    firstPathReceived::Bool = s.workerEntries[source].solvedPathA !== nothing
+    secondPathReceived::Bool = s.workerEntries[source].solvedPathB !== nothing
+    bothPathsReceived::Bool = firstPathReceived && secondPathReceived
+    hasNext::Bool = source + 1 <= (s.nranks - 1)
+
+    # We only move ourselves to beautification if both initial paths are done
+    if bothPathsReceived
         if source == 1
             MPI_OPT1_SendBeautificationJob(s, source)
-            # Otherwise, only send the job if the previous one is also done
         else
             previous = s.workerEntries[source-1]
-            if MPI_OPT1_WorkerCompletedInitialJob(previous)
+            if MPI_OPT1_WorkerCompletedPathBOfInitialJob(previous)
                 MPI_OPT1_SendBeautificationJob(s, source)
             end
         end
+    end
 
-        # If this worker has a next worker, and the next worker is waiting, send him the beautification job
-        hasNext::Bool = source + 1 <= (s.nranks - 1)
-        if hasNext
-            next = s.workerEntries[source+1]
-            nextIsWaiting = MPI_OPT1_WorkerCompletedInitialJob(next)
-            if nextIsWaiting
-                MPI_OPT1_SendBeautificationJob(s, source + 1)
-            end
+    # We trigger the next worker to beautify if our second path is done, and we have a next worker
+    if secondPathReceived && hasNext
+        next = source + 1
+        nextEntry = s.workerEntries[next]
+        nextIsWaiting = MPI_OPT1_WorkerCompletedInitialJob(nextEntry)
+        if nextIsWaiting
+            MPI_OPT1_SendBeautificationJob(s, next)
         end
     end
+
 end
 
 
