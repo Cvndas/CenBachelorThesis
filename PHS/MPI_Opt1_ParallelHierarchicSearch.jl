@@ -27,16 +27,35 @@ never isbits() compatible, which Isend() REQUIRES (regular send() does not)
 
 This is definitely a major flaw of the Julia programming language / MPI interface. Mutable vs Immutable should
 be something you decide as a programmer when the safety outweighs the inconvenience of locking yourself out of
-modifying your own data. Might write about this in the thesis. 
+modifying your own data. Without having looked into it, I assume this is just an unfortunate consequence 
+of having a loose python-like "types don't exist" style language that's actually compiled. 
+Might write about this in the thesis, might not. 
 
-TODO: An optimization that is not yet implemented
-Currently, when a request is made for more path data, it sends a larger chunk of tiles, which includes
-tiles that were previously sent. There's an efficient way to store which tiles have already been sent, however.
-This can be done with a [mazewidth x 2] array, where each column stores the highest and lowest y values that
-were sent for the column in that x position. This way, the master core doesn't have to store (close to) a copy of
-the entire map just to remember wihch tiles it has already sent, i.e. which ones it can omit in the next
-supply.
+There is currently a small inefficiency, where sometimes the worker requests for more mapdata,
+yet the master has already sent those maptiles for the worker's OTHER job. I'll be sure to measure the number
+of times that an empty map supplement is delivered, to see if this is a truly a concern. The reason this happens
+is because when the worker works on jobA, requests data, then works on jobB, misses data for jobB, it may not
+know that perhaps the missing tiles from jobB were already on the way from the previous jobA supplement request.
 
+
+# TODO: Features
+- GetEstimatedNecessaryCells probably still doesn't support waypointB being below waypointA. Go through it and see 
+  if that's true
+
+
+# TODO: Comprehensive logging of various things, benchmarks, etc. As for loggin
+- The number of times that empty messages are sent
+- How much mapdata is eventually sent to each worker compared to the full map data
+- How often new mapdata is requested during the beautification phase, when no latency hiding exists to compensate
+
+As for benchmarks
+- Single threaded vs MPI accuracy
+- Single threaded vs MPI time
+- Scaling with cores on personal laptop vs DAS-5
+- Beautification vs no beautification time
+- Beautification vs no beautification accuracy
+- How much time is spent passively waiting (i.e, when latency hiding fails)
+- etc.
 
 =#
 # Sent by master core for the initial delivery of map data, before any jobs are posted.
@@ -257,9 +276,10 @@ end
 function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile, allTiles::Array{MapTile,2}, verticalEstimationSize::Int32, horizontalExtensionSize::Int32, maxX::Int32, maxY::Int32, sentMinMax::Array{Union{MinMaxY,Nothing}})::Array{MapTile,1}
     # TODO: Support this for when wayPointB is BELOW or to the LEFT of wayPointA. Will need some adjustments to the math
     println("~~~Going to get the estimated necessary cells for a path between $wayPointA and $wayPointB")
-    println("~~~Vertical estimation size: $verticalEstimationSize, horizontalExtensionSize: $horizontalExtensionSize")
+    # println("~~~Vertical estimation size: $verticalEstimationSize, horizontalExtensionSize: $horizontalExtensionSize")
 
     DEBUG_previouslySentNotAddedCount::Int = 0
+    DEBUG_totalConsidered::Int = 0
 
     # // ::: -------------------------:: Creating the diagonals ::------------------------- ::: // 
     leftWayPoint::MapTile = if wayPointA.x < wayPointB.x
@@ -274,7 +294,7 @@ function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapT
     else
         (wayPointA.y - wayPointB.y) / wayPointXDif
     end
-    println("~~~Computed a slope of $slope")
+    # println("~~~Computed a slope of $slope")
 
     diagonals = Tuple{Int32,Int32}[]
 
@@ -328,14 +348,16 @@ function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapT
             for v in lowest:highest
                 if v < columnMinMax.minY || v > columnMinMax.maxY
                     push!(coordinates, (diagonal[1], v))
+                    DEBUG_totalConsidered += 1
                 else
                     DEBUG_previouslySentNotAddedCount += 1
+                    DEBUG_totalConsidered += 1
                 end
             end
             if lowest < columnMinMax.minY
                 columnMinMax.minY = lowest
             end
-            if highest > columnMinMax.minY
+            if highest > columnMinMax.maxY
                 columnMinMax.maxY = highest
             end
         end
@@ -347,8 +369,9 @@ function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapT
     for coord in coordinates
         push!(mapTilePackage, allTiles[coord[1], coord[2]])
     end
-    println("~~~Created the mapTilePackage")
-    println("~~~New Optimization: avoided sending $DEBUG_previouslySentNotAddedCount previously sent tiles. Instead, we sent $(length(mapTilePackage)) tiles, saving $(DEBUG_previouslySentNotAddedCount - length(mapTilePackage)) tiles")
+    # println("~~~Created the mapTilePackage")
+    println("~~~New Optimization: avoided sending $DEBUG_previouslySentNotAddedCount previously sent tiles. Instead, we sent $(length(mapTilePackage)) tiles, saving $(DEBUG_totalConsidered - length(mapTilePackage)) tiles")
+    # TODO: Log the number of times that map supplements of length 0 are sent.
     # display(mapTilePackage)
 
     return mapTilePackage
@@ -579,7 +602,6 @@ function MPI_OPT1_Master_HandleMapRequest(s::MasterState, status::MPI.MPI_Status
     s.horizontalExtensionSize = s.horizontalExtensionSize_Default * s.currentLevel^2
 
     sentMinMax::Array{Union{MinMaxY,Nothing}} = s.workerEntries[source].sentMinMax
-
     supplementMapTiles::Array{MapTile,1} =
         MPI_OPT1_GetEstimatedNecessaryCells(mapRequest.wayPointA, mapRequest.wayPointB, s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
 
@@ -795,12 +817,14 @@ function MPI_OPT1_Worker_ReceiveAndProcessMapRequest!(availableTiles::Dict{Tuple
 
     println("Worker $rank received a new batch of tiles, with $(length(mapSupplyDelivery)) tiles.")
 
-    # TODO: This is slow. Think of a smarter way of doing this. (READ THE OPTIMIZATION AT TOP OF FILE)
-    # TODO: Put an assert here to guarantee that no previously sent tiles are ever delivered a second time.
     for suppliedTile::MapTile in mapSupplyDelivery
-        if haskey(availableTiles, (suppliedTile.x, suppliedTile.y)) == false
-            availableTiles[(suppliedTile.x, suppliedTile.y)] = suppliedTile
-        end
+        @assert !haskey(availableTiles, (suppliedTile.x, suppliedTile.y)) "Worker $rank already had the tile $suppliedTile in its storage"
+        # if haskey(availableTiles, (suppliedTile.x, suppliedTile.y))
+        #     println("~~~~~~~~~~~++++++++++++~~~~~~~Worker $rank already had the tile $suppliedTile in its storage")
+        # end
+        # if haskey(availableTiles, (suppliedTile.x, suppliedTile.y)) == false
+        availableTiles[(suppliedTile.x, suppliedTile.y)] = suppliedTile
+        # end
     end
 end
 
