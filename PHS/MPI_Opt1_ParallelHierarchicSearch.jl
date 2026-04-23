@@ -90,6 +90,10 @@ end
 
 
 
+mutable struct MinMaxY
+    minY::Int32
+    maxY::Int32
+end
 
 mutable struct MPI_Opt1_WorkerEntry
     workerRank::Int
@@ -100,15 +104,14 @@ mutable struct MPI_Opt1_WorkerEntry
     solvedPathA::Union{Array{MapTile,1},Nothing}
     solvedPathB::Union{Array{MapTile,1},Nothing}
 
-
-    # receivedBeautificationJob::Bool
+    # array: for each "column", save the minY and maxY of the mapdata that was sent to the worker.
+    sentMinMax::Array{Union{MinMaxY,Nothing}}
 
     # Beautification path
     solvedPathC::Union{Array{MapTile,1},Nothing}
 
-
-    function MPI_Opt1_WorkerEntry(workerRank::Int)
-        new(workerRank, 1, 1, nothing, nothing, nothing)
+    function MPI_Opt1_WorkerEntry(workerRank::Int, sentMinMax::Array{Union{MinMaxY,Nothing}})
+        new(workerRank, 1, 1, nothing, nothing, sentMinMax, nothing)
     end
 end
 
@@ -251,10 +254,12 @@ end
 
 
 # A function that took quite a few calories to write
-function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile, allTiles::Array{MapTile,2}, verticalEstimationSize::Int32, horizontalExtensionSize::Int32, maxX::Int32, maxY::Int32)::Array{MapTile,1}
+function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile, allTiles::Array{MapTile,2}, verticalEstimationSize::Int32, horizontalExtensionSize::Int32, maxX::Int32, maxY::Int32, sentMinMax::Array{Union{MinMaxY,Nothing}})::Array{MapTile,1}
     # TODO: Support this for when wayPointB is BELOW or to the LEFT of wayPointA. Will need some adjustments to the math
     println("~~~Going to get the estimated necessary cells for a path between $wayPointA and $wayPointB")
     println("~~~Vertical estimation size: $verticalEstimationSize, horizontalExtensionSize: $horizontalExtensionSize")
+
+    DEBUG_previouslySentNotAddedCount::Int = 0
 
     # // ::: -------------------------:: Creating the diagonals ::------------------------- ::: // 
     leftWayPoint::MapTile = if wayPointA.x < wayPointB.x
@@ -300,11 +305,38 @@ function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapT
 
     # ::: -------------------------:: Grabbing columns from the diagonals ::------------------------- ::: // 
     for diagonal::Tuple{Int32,Int32} in diagonals
+
         lowest = diagonal[2] - verticalEstimationSize
+        if lowest < 1
+            lowest = 1
+        end
+
         highest = diagonal[2] + verticalEstimationSize
-        for v in lowest:highest
-            if v >= 1 && v <= maxY
+        if highest > maxY
+            highest = maxY
+        end
+
+        columnMinMax = sentMinMax[diagonal[1]]
+        if columnMinMax === nothing
+            for v in lowest:highest
                 push!(coordinates, (diagonal[1], v))
+            end
+            newColumnMinMax::MinMaxY = MinMaxY(lowest, highest)
+            sentMinMax[diagonal[1]] = newColumnMinMax
+
+        else # If the sentMinMax did exist for this column, use that to selectively gather tiles to send
+            for v in lowest:highest
+                if v < columnMinMax.minY || v > columnMinMax.maxY
+                    push!(coordinates, (diagonal[1], v))
+                else
+                    DEBUG_previouslySentNotAddedCount += 1
+                end
+            end
+            if lowest < columnMinMax.minY
+                columnMinMax.minY = lowest
+            end
+            if highest > columnMinMax.minY
+                columnMinMax.maxY = highest
             end
         end
     end
@@ -315,7 +347,8 @@ function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapT
     for coord in coordinates
         push!(mapTilePackage, allTiles[coord[1], coord[2]])
     end
-    # println("~~~Created the mapTilePackage:")
+    println("~~~Created the mapTilePackage")
+    println("~~~New Optimization: avoided sending $DEBUG_previouslySentNotAddedCount previously sent tiles. Instead, we sent $(length(mapTilePackage)) tiles, saving $(DEBUG_previouslySentNotAddedCount - length(mapTilePackage)) tiles")
     # display(mapTilePackage)
 
     return mapTilePackage
@@ -433,10 +466,6 @@ function MPI_Opt1_MasterCore(comm, nranks, rank, host, computedMaze::ComputedMaz
     s::MasterState = MPI_OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze)
     MPI_OPT1_Master_SendInitialJobs(s, s.initialPaths)
 
-    # Let's create the registry now that the workers are probably busy for a little bit
-    for workerRank in 1:s.nranks-1
-        push!(s.workerEntries, MPI_Opt1_WorkerEntry(workerRank))
-    end
 
     # while MPI_OPT1_AllInitialSolvedPathsAreReceived(s.workerEntries) == false
     while MPI_OPT1_AllBeautyPathsAreReceived(s.workerEntries) == false
@@ -458,6 +487,7 @@ function MPI_Opt1_MasterCore(comm, nranks, rank, host, computedMaze::ComputedMaz
     # // ::: -------------------------:: Processing the Results ::------------------------- ::: // 
     println("All worker paths are received")
     println("\n\n--- THE RESULTS ---\n")
+    println("The results were reached with a final level of $(s.currentLevel)")
     fullPath_Initial::Array{MapTile,1} = reduce(vcat, s.solved_initialPaths)
     cost_Initial = ComputePathCost(fullPath_Initial)
 
@@ -548,10 +578,10 @@ function MPI_OPT1_Master_HandleMapRequest(s::MasterState, status::MPI.MPI_Status
     s.verticalEstimationSize = s.verticalEstimationSize_Default * s.currentLevel^2
     s.horizontalExtensionSize = s.horizontalExtensionSize_Default * s.currentLevel^2
 
-    # TODO: Optimization, described on top
+    sentMinMax::Array{Union{MinMaxY,Nothing}} = s.workerEntries[source].sentMinMax
 
     supplementMapTiles::Array{MapTile,1} =
-        MPI_OPT1_GetEstimatedNecessaryCells(mapRequest.wayPointA, mapRequest.wayPointB, s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY)
+        MPI_OPT1_GetEstimatedNecessaryCells(mapRequest.wayPointA, mapRequest.wayPointB, s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
 
     MPI.Isend(supplementMapTiles, s.comm, dest=source, tag=MPI_OPT1_MAP_RESPONSE_DELIVERY)
     println("Master Core sent a map supplement with $(length(supplementMapTiles)) tiles over to worker $source")
@@ -674,13 +704,16 @@ function MPI_OPT1_Master_SendInitialJobs(s::MasterState, paths::Vector{Tuple{Map
     @assert length(paths) == 2 * (s.nranks - 1)
     for i in 1:s.nranks-1 # for each rank
         pathA = paths[pathIndex]
+
+        sentMinMax::Array{Union{MinMaxY,Nothing}} = fill(nothing, s.maxX)
+
         pathA_estimatedNecessaryCells::Array{MapTile,1} =
-            MPI_OPT1_GetEstimatedNecessaryCells(pathA[1], pathA[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY)
+            MPI_OPT1_GetEstimatedNecessaryCells(pathA[1], pathA[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
         pathIndex += 1
 
         pathB = paths[pathIndex]
         pathB_estimatedNecessaryCells::Array{MapTile,1} =
-            MPI_OPT1_GetEstimatedNecessaryCells(pathB[1], pathB[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY)
+            MPI_OPT1_GetEstimatedNecessaryCells(pathB[1], pathB[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
         pathIndex += 1
 
         both_estimatedNecessaryCells::Array{MapTile,1} = unique(vcat(pathA_estimatedNecessaryCells, pathB_estimatedNecessaryCells))
@@ -696,12 +729,12 @@ function MPI_OPT1_Master_SendInitialJobs(s::MasterState, paths::Vector{Tuple{Map
         jobB::MPI_Opt1_Job = MPI_Opt1_Job(pathB[1], pathB[2])
         jobsForWorker::MPI_Opt1_JobRequest = MPI_Opt1_JobRequest(jobA, jobB, s.maxX, s.maxY)
         push!(pendingSends, MPI.Isend(jobsForWorker, s.comm; dest=workerRank, tag=MPI_OPT1_INITIAL_JOB_REQUEST))
+
+
+        push!(s.workerEntries, MPI_Opt1_WorkerEntry(workerRank, sentMinMax))
     end
+
     println("Sent off all the jobs and mapdata to the workers.")
-    # for pendingSend::MPI.Request in pendingSends
-    #     status = MPI.Wait(pendingSend, MPI.Status)
-    #     # println("One of the pending sends has been completed::: source: $(status.MPI_SOURCE), tag: $(status.MPI_TAG)")
-    # end
 end
 
 
@@ -763,6 +796,7 @@ function MPI_OPT1_Worker_ReceiveAndProcessMapRequest!(availableTiles::Dict{Tuple
     println("Worker $rank received a new batch of tiles, with $(length(mapSupplyDelivery)) tiles.")
 
     # TODO: This is slow. Think of a smarter way of doing this. (READ THE OPTIMIZATION AT TOP OF FILE)
+    # TODO: Put an assert here to guarantee that no previously sent tiles are ever delivered a second time.
     for suppliedTile::MapTile in mapSupplyDelivery
         if haskey(availableTiles, (suppliedTile.x, suppliedTile.y)) == false
             availableTiles[(suppliedTile.x, suppliedTile.y)] = suppliedTile
