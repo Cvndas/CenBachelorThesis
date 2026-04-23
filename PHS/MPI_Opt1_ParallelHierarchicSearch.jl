@@ -27,10 +27,15 @@ modifying your own data. Might write about this in the thesis.
 TODO: An optimization that is not yet implemented
 Currently, when a request is made for more path data, it sends a larger chunk of tiles, which includes
 tiles that were previously sent. There's an efficient way to store which tiles have already been sent, however.
-This can be done with a [mazewidth x 2] array, where each column stores the highest and lowest values that
-were sent for that x position. This way, the master core doesn't have to store (close to) a copy of
+This can be done with a [mazewidth x 2] array, where each column stores the highest and lowest y values that
+were sent for the column in that x position. This way, the master core doesn't have to store (close to) a copy of
 the entire map just to remember wihch tiles it has already sent, i.e. which ones it can omit in the next
 supply.
+
+Idea: 
+During the beautification stage, almost all the data should already be available. Therefore, the switching
+between path A and path B in the initial stage won't be necessary, and thus the beautification step can involve
+one path for each core
 
 =#
 # Sent by master core for the initial delivery of map data, before any jobs are posted.
@@ -87,10 +92,20 @@ mutable struct MPI_Opt1_WorkerEntry
     workerRank::Int
     workerLevel_A::Int
     workerLevel_B::Int
-    pathAReceived::Bool
-    pathBReceived::Bool
+
+    # Initial paths
+    solvedPathA::Union{Array{MapTile,1},Nothing}
+    solvedPathB::Union{Array{MapTile,1},Nothing}
+
+
+    # receivedBeautificationJob::Bool
+
+    # Beautification path
+    solvedPathC::Union{Array{MapTile,1},Nothing}
+
+
     function MPI_Opt1_WorkerEntry(workerRank::Int)
-        new(workerRank, 1, 1, false, false)
+        new(workerRank, 1, 1, nothing, nothing, nothing)
     end
 end
 
@@ -130,7 +145,7 @@ mutable struct MasterState
     horizontalExtensionSize::Int32
     horizontalExtensionSize_Default::Int32
 
-    workerRecords::Array{MPI_Opt1_WorkerEntry}
+    workerEntries::Array{MPI_Opt1_WorkerEntry}
     maxX::Int32
     maxY::Int32
     nranks
@@ -164,7 +179,13 @@ end
 #
 #
 #
-function TryLevelUp(allEntries::Array{MPI_Opt1_WorkerEntry})
+
+function GetMiddleElementOfArray(theArray)
+    return theArray[length(theArray)÷2]
+end
+
+
+function MPI_OPT1_TryLevelUp(allEntries::Array{MPI_Opt1_WorkerEntry})
     maxLevel = -1
     for entry::MPI_Opt1_WorkerEntry in allEntries
         workerLevel = max(entry.workerLevel_A, entry.workerLevel_B)
@@ -177,8 +198,12 @@ function TryLevelUp(allEntries::Array{MPI_Opt1_WorkerEntry})
 end
 
 
+function MPI_OPT1_WorkerCompletedInitialJob(workerEntry::MPI_Opt1_WorkerEntry)
+    return workerEntry.solvedPathA !== nothing && workerEntry.solvedPathB !== nothing
+end
 
-function UpdateRecord(record::MPI_Opt1_WorkerEntry, mapRequest::MPI_Opt1_MapRequest)
+
+function MPI_OPT1_UpdateRecord(record::MPI_Opt1_WorkerEntry, mapRequest::MPI_Opt1_MapRequest)
     if mapRequest.isWayPointA
         record.workerLevel_A += 1
     else
@@ -189,9 +214,9 @@ end
 
 
 
-function AllPathsAreReceived(workerRecords::Array{MPI_Opt1_WorkerEntry})
+function MPI_OPT1_AllInitialSolvedPathsAreReceived(workerRecords::Array{MPI_Opt1_WorkerEntry})
     for record::MPI_Opt1_WorkerEntry in workerRecords
-        if record.pathAReceived == false || record.pathBReceived == false
+        if record.solvedPathA === nothing || record.solvedPathB === nothing
             return false
         end
     end
@@ -201,6 +226,65 @@ end
 
 
 
+#=
+Idea: Take each point along the diagonal, and an arbitrary number of tiles above and below those diagonals.
+Also extend this slightly to the left and the right.
+=#
+function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile, allTiles::Array{MapTile,2}, verticalEstimationSize::Int32, horizontalExtension::Int32, maxX::Int32, maxY::Int32)::Array{MapTile,1}
+    # TODO: Support this for when wayPointB is BELOW or to the LEFT of wayPointA. Will need some adjustments to the math
+    @assert wayPointA.x <= wayPointB.x && wayPointA.y <= wayPointB.y "WaypointB being below or to the left of wayPoint A is not yet supported"
+    estimatedNecessaryCells = MapTile[]
+    estimatedNecessaryCells_Coordinates = Tuple{Int32,Int32}[]
+    diagonals = Tuple{Int32,Int32}[]
+
+    leftMostX = min(wayPointA.x - horizontalExtension, wayPointB.x - horizontalExtension)
+    if leftMostX < 1
+        leftMostX = 1
+    end
+
+    rightMostX = max(wayPointA.x + horizontalExtension, wayPointB.x + horizontalExtension)
+    if rightMostX > maxX
+        rightMostX = maxX
+    end
+
+    xDifTotal = abs(wayPointA.x - wayPointB.x)
+    yDifTotal = abs(wayPointA.y - wayPointB.y)
+
+    yDifPerX::Float64 = Float64(yDifTotal) / Float64(xDifTotal)
+
+    @assert yDifPerX > 0 "yDifPerX was <= 0, namely $yDifPerX, xDifTotal: $xDifTotal, yDifTotal: $yDifTotal"
+    leftMostY = Int32(wayPointA.y - ((wayPointA.x - leftMostX) * yDifPerX))
+
+    currentDiagonalY::Float64 = leftMostY - yDifPerX
+    for x in leftMostX:rightMostX
+        currentDiagonalY = currentDiagonalY + yDifPerX
+        push!(diagonals, (x, Int32(currentDiagonalY)))
+    end
+
+    for diagonal::Tuple{Int32,Int32} in diagonals
+        # The diagonal itself
+        if diagonal[2] >= 1 && diagonal[2] <= maxY
+            push!(estimatedNecessaryCells_Coordinates, diagonal)
+        end
+        # The tiles above and below the diagonal
+        for i in 1:verticalEstimationSize
+            bottomCoordY = diagonal[2] - i
+            topCoordY = diagonal[2] + i
+            if bottomCoordY >= 1
+                push!(estimatedNecessaryCells_Coordinates, (diagonal[1], bottomCoordY))
+            end
+            if topCoordY <= maxY
+                push!(estimatedNecessaryCells_Coordinates, (diagonal[1], topCoordY))
+            end
+        end
+    end
+
+    for cell in estimatedNecessaryCells_Coordinates
+        push!(estimatedNecessaryCells, allTiles[cell[1], cell[2]])
+    end
+
+    return estimatedNecessaryCells
+end
 
 
 
@@ -218,7 +302,7 @@ end
 #
 #
 #
-function MPI_Opt1_PhsEntry(comm, nranks, rank, host)
+function MPI_Opt1_Entry(comm, nranks, rank, host)
     if rank == 0
         println("Entered MPI_Opt1_PhsEntry")
         CenAstar.Initialize()
@@ -231,7 +315,7 @@ function MPI_Opt1_PhsEntry(comm, nranks, rank, host)
     end
 
     if rank == 0
-        MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze)
+        MPI_Opt1_MasterCore(comm, nranks, rank, host, computedMaze)
     else
         MPI_Opt1_WorkerCore(comm, nranks, rank, host)
     end
@@ -248,7 +332,50 @@ end
 
 
 
-function Master_HandlePrelude(comm, nranks, computedMaze::ComputedMaze)
+function MPI_Opt1_MasterCore(comm, nranks, rank, host, computedMaze::ComputedMaze)
+    s::MasterState = MPI_OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze)
+    MPI_OPT1_Master_SendInitialJobs(s, s.initialPaths)
+
+    # Let's create the registry now that the workers are probably busy for a little bit
+    for workerRank in 1:s.nranks-1
+        push!(s.workerEntries, MPI_Opt1_WorkerEntry(workerRank))
+    end
+
+    while MPI_OPT1_AllInitialSolvedPathsAreReceived(s.workerEntries) == false
+        status = MPI.Probe(comm, MPI.Status; source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG)
+        source = MPI.Get_source(status)
+        tag = MPI.Get_tag(status)
+        println("Master probed an incoming message from rank $source")
+        # // ::: -------------------------:: Handling a Map supply request ::------------------------- ::: // 
+        if tag == MPI_OPT1_MAP_REQUEST
+            MPI_OPT1_Master_HandleMapRequest(s, status, source, tag)
+            # ::: -------------------------:: HAndling an incoming path ::------------------------- ::: // 
+        elseif tag == MPI_OPT1_PATH_DELIVERY_A || tag == MPI_OPT1_PATH_DELIVERY_B
+            MPI_OPT1_Master_HandleIncomingInitialSolvedPath(s, status, source, tag)
+        else
+            error("Master received message with tag $tag, which was not expected")
+        end
+    end
+
+    # // ::: -------------------------:: Processing the Results ::------------------------- ::: // 
+    println("All worker paths are received")
+    println("\n\n--- THE RESULTS ---\n")
+    fullPath_Initial::Array{MapTile,1} = reduce(vcat, s.solved_initialPaths)
+    cost_Initial = ComputePathCost(fullPath_Initial)
+    println("Reconstructed the initial full path, which has cost $cost_Initial")
+    _ = CenAstar.ShowMaze(s.computedMaze.wallMapTiles, s.computedMaze.pathMapTiles, s.computedMaze.mapBorders, fullPath_Initial, MapTile[], wayPoints=s.initialWayPoints)
+    # // ::: -------------------------:: End of Processing the Results ::------------------------- ::: // 
+end
+
+
+
+
+
+
+
+
+
+function MPI_OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMaze)
     verticalEstimationSize_Default::Int32 = 3
     horizontalExtensionSize_Default::Int32 = 3
     currentLevel = 1
@@ -296,7 +423,7 @@ end
 
 
 
-function Master_HandleMapRequest(s::MasterState, status::MPI.MPI_Status, source, tag)
+function MPI_OPT1_Master_HandleMapRequest(s::MasterState, status::MPI.MPI_Status, source, tag)
     println("A map request from rank $source is incoming")
 
     # TODO: Figure out this recv thing, which sould be a regular blocking one as the data is already there
@@ -307,8 +434,8 @@ function Master_HandleMapRequest(s::MasterState, status::MPI.MPI_Status, source,
     println("Master read the map request from $source")
 
     levelBefore = s.currentLevel
-    UpdateRecord(s.workerRecords[source], mapRequest)
-    s.currentLevel = TryLevelUp(s.workerRecords)
+    MPI_OPT1_UpdateRecord(s.workerEntries[source], mapRequest)
+    s.currentLevel = MPI_OPT1_TryLevelUp(s.workerEntries)
     if levelBefore != s.currentLevel
         println("The currentLevel after the map request was received is now $(s.currentLevel), and previously was $levelBefore")
     end
@@ -319,17 +446,61 @@ function Master_HandleMapRequest(s::MasterState, status::MPI.MPI_Status, source,
     # TODO: Optimization, described on top
 
     supplementMapTiles::Array{MapTile,1} =
-        GetEstimatedNecessaryCells(mapRequest.wayPointA, mapRequest.wayPointB, s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY)
+        MPI_OPT1_GetEstimatedNecessaryCells(mapRequest.wayPointA, mapRequest.wayPointB, s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY)
 
     MPI.Isend(supplementMapTiles, s.comm, dest=source, tag=MPI_OPT1_MAP_RESPONSE_DELIVERY)
     println("Master Core sent a map supplement with $(length(supplementMapTiles)) tiles over to worker $source")
 end
 
 
+function MPI_OPT1_SendBeautificationJob(s::MasterState, source)
+    if source > 1
+        @assert MPI_OPT1_WorkerCompletedInitialJob(s.workerEntries[source-1]) "Previous worker was not done yet"
+    end
+
+    #=
+    The beautifcation paths:
+    For the first worker, it starts at the start of the own first path
+    and ends at the middle of the own second path.
+
+    For middle workers, it starts at the middle of the previous worker's second path,
+    and ends at the middle of the own second path
+
+    For the last worker, it starts at the middle of the previous worker's second path,
+    and ends at the end of the own second path
+    =#
+    isFirstWorker::Bool = source == 1
+    isEndWorker::Bool = source == s.nranks - 1
+    isMiddleWorker::Bool = !isFirstWorker && !isEndWorker
+
+    own::MPI_Opt1_WorkerEntry = s.workerEntries[source]
+    if isFirstWorker
+        println("isFirstWorker")
+        beautyStartTile::MapTile = own.solvedPathA[end]
+        @assert beautyStartTile.x == 1 && beautyStartTile.y == 1 "I believed that solved pathA had 1 1 at the end of the array, due to construction order. The first entry of the array though was $(own.solvedPathA[1])"
+        beautyEndTile::MapTile = GetMiddleElementOfArray(own.solvedPathB)
+
+    elseif isMiddleWorker
+        println("isMiddleWorker")
+        prev::MPI_Opt1_WorkerEntry = s.workerEntries[source-1]
+        beautyStartTile = GetMiddleElementOfArray(prev.solvedPathB)
+        beautyEndTile = GetMiddleElementOfArray(own.solvedPathB)
+
+    elseif isEndWorker
+        println("isEndWorker")
+        prev = s.workerEntries[source-1]
+        beautyStartTile = GetMiddleElementOfArray(prev.solvedPathB)
+        beautyEndTile = own.solvedPathB[1]
+    else
+        error("None were true, of isFirstWorker, isEndWorker, and isMiddleWorker")
+    end
+
+    println("Worker $source is going to receive the BEAUTIFICATION job from $beautyStartTile to $beautyEndTile")
+end
 
 
 
-function Master_HandleIncomingSolvedPath(s::MasterState, status::MPI.MPI_Status, source, tag)
+function MPI_OPT1_Master_HandleIncomingInitialSolvedPath(s::MasterState, status::MPI.MPI_Status, source, tag)
     incomingPathSize = MPI.Get_count(status, MapTile)
     println("Master core is about to receive a path with count $incomingPathSize")
     receivedPath = Array{MapTile,1}(undef, incomingPathSize)
@@ -337,31 +508,77 @@ function Master_HandleIncomingSolvedPath(s::MasterState, status::MPI.MPI_Status,
     MPI.Wait(incomingPath_MPIRequest)
     if tag == MPI_OPT1_PATH_DELIVERY_A
         println("Master core just received path A from worker $source")
-        s.workerRecords[source].pathAReceived = true
-    else
+        @assert s.workerEntries[source].solvedPathA === nothing "Core $source sent solved path A, but this was already solved"
+        s.workerEntries[source].solvedPathA = receivedPath
+    elseif tag == MPI_OPT1_PATH_DELIVERY_B
         println("Master core just received path B from worker $source")
-        s.workerRecords[source].pathBReceived = true
+        @assert s.workerEntries[source].solvedPathB === nothing "Core $source sent solved path B, but this was already solved"
+        s.workerEntries[source].solvedPathB = receivedPath
+    else
+        error("Received incompatible tag in HandleIncomingInitialSolvedPath: $tag")
     end
     push!(s.solved_initialPaths, receivedPath)
+
+    #=
+    TODO OPTIMIZATION:
+    You actually only need the previous worker's SECOND path to be done. This should be a very simple change
+    but I'll do it only when the current code is shown to work.
+    =#
+
+
+    #=
+    Idea
+    The first worker doesn't depend on the immediate previous worker being done with the initial path.
+    Subsequent workers do. Therefore, it can be guaranteed for non-first workers that
+    either they arrive and see the previous worker has completed the initial path,
+    or they are the first. Likewise, they either see that the next worker is waiting,
+    and wake him up, or see he is not ready yet. Then that worker will eventually see
+    the current worker is done, and ... etc. etc. I'm convinced this process is correct
+    =#
+    bothPathsReceived::Bool = MPI_OPT1_WorkerCompletedInitialJob(s.workerEntries[source])
+    if bothPathsReceived
+        println("Master core: Worker $source completed path A and B")
+
+        # If this is the first worker, always start the beautification process
+        if source == 1
+            MPI_OPT1_SendBeautificationJob(s, source)
+            # Otherwise, only send the job if the previous one is also done
+        else
+            previous = s.workerEntries[source-1]
+            if MPI_OPT1_WorkerCompletedInitialJob(previous)
+                MPI_OPT1_SendBeautificationJob(s, source)
+            end
+        end
+
+        # If this worker has a next worker, and the next worker is waiting, send him the beautification job
+        hasNext::Bool = source + 1 <= (s.nranks - 1)
+        if hasNext
+            next = s.workerEntries[source+1]
+            nextIsWaiting = MPI_OPT1_WorkerCompletedInitialJob(next)
+            if nextIsWaiting
+                MPI_OPT1_SendBeautificationJob(s, source + 1)
+            end
+        end
+    end
 end
 
 
 
 
 
-function Master_SendInitialJobs(s::MasterState, paths::Vector{Tuple{MapTile,MapTile}})
+function MPI_OPT1_Master_SendInitialJobs(s::MasterState, paths::Vector{Tuple{MapTile,MapTile}})
     pendingSends::Vector{MPI.Request} = MPI.Request[]
     pathIndex = 1
     @assert length(paths) == 2 * (s.nranks - 1)
     for i in 1:s.nranks-1 # for each rank
         pathA = paths[pathIndex]
         pathA_estimatedNecessaryCells::Array{MapTile,1} =
-            GetEstimatedNecessaryCells(pathA[1], pathA[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY)
+            MPI_OPT1_GetEstimatedNecessaryCells(pathA[1], pathA[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY)
         pathIndex += 1
 
         pathB = paths[pathIndex]
         pathB_estimatedNecessaryCells::Array{MapTile,1} =
-            GetEstimatedNecessaryCells(pathB[1], pathB[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY)
+            MPI_OPT1_GetEstimatedNecessaryCells(pathB[1], pathB[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY)
         pathIndex += 1
 
         both_estimatedNecessaryCells::Array{MapTile,1} = unique(vcat(pathA_estimatedNecessaryCells, pathB_estimatedNecessaryCells))
@@ -393,61 +610,46 @@ end
 
 
 
-function MPI_Opt1_PhsMasterCore(comm, nranks, rank, host, computedMaze::ComputedMaze)
-    s::MasterState = Master_HandlePrelude(comm, nranks, computedMaze)
-    Master_SendInitialJobs(s, s.initialPaths)
 
-    # Let's create the registry now that the workers are probably busy for a little bit
-    for workerRank in 1:s.nranks-1
-        push!(s.workerRecords, MPI_Opt1_WorkerEntry(workerRank))
-    end
 
-    while AllPathsAreReceived(s.workerRecords) == false
-        status = MPI.Probe(comm, MPI.Status; source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG)
-        source = MPI.Get_source(status)
-        tag = MPI.Get_tag(status)
-        println("Master probed an incoming message from rank $source")
-        # // ::: -------------------------:: Handling a Map supply request ::------------------------- ::: // 
-        if tag == MPI_OPT1_MAP_REQUEST
-            Master_HandleMapRequest(s, status, source, tag)
-            # ::: -------------------------:: HAndling an incoming path ::------------------------- ::: // 
-        elseif tag == MPI_OPT1_PATH_DELIVERY_A || tag == MPI_OPT1_PATH_DELIVERY_B
-            Master_HandleIncomingSolvedPath(s, status, source, tag)
-        else
-            error("Master received message with tag $tag, which was not expected")
-        end
-    end
 
-    # // ::: -------------------------:: Processing the Results ::------------------------- ::: // 
-    println("All worker paths are received")
-    println("\n\n--- THE RESULTS ---\n")
-    fullPath_Initial::Array{MapTile,1} = reduce(vcat, s.solved_initialPaths)
-    cost_Initial = ComputePathCost(fullPath_Initial)
-    println("Reconstructed the initial full path, which has cost $cost_Initial")
-    _ = CenAstar.ShowMaze(s.computedMaze.wallMapTiles, s.computedMaze.pathMapTiles, s.computedMaze.mapBorders, fullPath_Initial, MapTile[], wayPoints=s.initialWayPoints)
-    # // ::: -------------------------:: End of Processing the Results ::------------------------- ::: // 
+
+function MPI_Opt1_WorkerCore(comm, nranks, rank, host)
+    w::WorkerState = MPI_OPT1_Worker_ReceiveInitialMapDataAndJobs(comm, rank)
+
+
+    MPI_OPT1_Worker_CompleteJobPair(w, MPI_OPT1_PATH_DELIVERY_A, MPI_OPT1_PATH_DELIVERY_B)
+
+    # TODO: Job C and D, the beautification pass
+    # The master core needs to recognize that this worker completed both paths, and immediately provide new jobs
+    # The tricky part will be figuring out how to handle the last 
+    # worker, who will have a longer path. Although this will be transparent for the worker.
+
+    println("Worker $(w.rank) is done.")
+    MPI_OPT1_Worker_ReceiveBeautificationJobs!(w)
+    # TODO: Enable this when the master core sends the new deliveries and they're actually received
+    # Worker_CompleteJobPair(w, MPI_OPT1_PATH_DELIVERY_C, MPI_OPT1_PATH_DELIVERY_D
 end
 
 
 
 
 
-
-function Worker_SendMapRequest(jobState::WorkerPathfindingState, isWayPointA::Bool, comm)::MPI.Request
+function MPI_OPT1_Worker_SendMapRequest(jobState::WorkerPathfindingState, isWayPointA::Bool, comm)::MPI.Request
     mapRequest::MPI_Opt1_MapRequest = MPI_Opt1_MapRequest(jobState.startTile, jobState.endTile, isWayPointA)
     sendRequest::MPI.Request = MPI.Isend(mapRequest, comm, dest=0, tag=MPI_OPT1_MAP_REQUEST)
     return sendRequest
 end
 
 
-function Worker_SendCompletedPath(solvedPath::Array{MapTile}, TAG_TO_USE, comm)
+function MPI_OPT1_Worker_SendCompletedPath(solvedPath::Array{MapTile}, TAG_TO_USE, comm)
     MPI.Isend(solvedPath, comm, dest=0, tag=TAG_TO_USE)
 end
 
 
 
 
-function Worker_ReceiveAndProcessMapRequest!(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, comm, rank)
+function MPI_OPT1_Worker_ReceiveAndProcessMapRequest!(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, comm, rank)
 
     mapSupplyStatus = MPI.Probe(comm, MPI.Status, source=0, tag=MPI_OPT1_MAP_RESPONSE_DELIVERY)
     incomingTilesSize = MPI.Get_count(mapSupplyStatus, MapTile)
@@ -471,12 +673,12 @@ function Worker_ReceiveAndProcessMapRequest!(availableTiles::Dict{Tuple{Int32,In
 end
 
 
-function Worker_ReceiveBeautificationJobs!(w::WorkerState)
+function MPI_OPT1_Worker_ReceiveBeautificationJobs!(w::WorkerState)
     println("Pretend that worker $(w.rank) just received some beautification jobs")
 end
 
 
-function Worker_ReceiveInitialMapDataAndJobs(comm, rank)::WorkerState
+function MPI_OPT1_Worker_ReceiveInitialMapDataAndJobs(comm, rank)::WorkerState
     # # The first thing we expect is the initial path delivery
     # The map data is sent first, but we can open up the mailbos for the job request in the meantime
     initialJobRequest_Ref = Ref{MPI_Opt1_JobRequest}()
@@ -524,46 +726,46 @@ end
 
 
 
-function Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobBCompletionTag)
+function MPI_OPT1_Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobBCompletionTag)
     jobASolved::Bool = false
     jobBSolved::Bool = false
 
     println("Worker $(w.rank) will solve paths ($(w.jobAState.startTile), $(w.jobAState.endTile)) and  ($(w.jobBState.startTile), $(w.jobBState.endTile))")
     while !jobASolved || !jobBSolved
-        jobA_solveResult = AStar_MPI_Opt1(w.availableTiles, w.maxX, w.maxY, w.jobAState)
+        jobA_solveResult = MPI_OPT1_CustomAStar(w.availableTiles, w.maxX, w.maxY, w.jobAState)
         if jobA_solveResult === nothing
 
             println("Worker $(w.rank) needs more data to solve its local path for job A.")
-            sendReq = Worker_SendMapRequest(w.jobAState, true, w.comm)
+            sendReq = MPI_OPT1_Worker_SendMapRequest(w.jobAState, true, w.comm)
             w.jobAState.postponed = true
         else
             println("worker $(w.rank) created a local path of length $(length(jobA_solveResult))")
             jobASolved = true
-            Worker_SendCompletedPath(jobA_solveResult, jobACompletionTag, w.comm)
+            MPI_OPT1_Worker_SendCompletedPath(jobA_solveResult, jobACompletionTag, w.comm)
             println("Worker $(w.rank) sent back a path that starts at $(jobA_solveResult[end]) and ends at $(jobA_solveResult[1])")
         end
 
         # Check if Job B's supplement has come in the mail yet 
         if w.jobBState.postponed
-            Worker_ReceiveAndProcessMapRequest!(w.availableTiles, w.comm, w.rank)
+            MPI_OPT1_Worker_ReceiveAndProcessMapRequest!(w.availableTiles, w.comm, w.rank)
             println("Worker $(w.rank) has received its JobB map supplement")
         end
 
-        jobB_solveResult = AStar_MPI_Opt1(w.availableTiles, w.maxX, w.maxY, w.jobBState)
+        jobB_solveResult = MPI_OPT1_CustomAStar(w.availableTiles, w.maxX, w.maxY, w.jobBState)
         if jobB_solveResult === nothing
             println("Worker $(w.rank) needs more data to solve its local path for job B.")
-            sendReq = Worker_SendMapRequest(w.jobBState, false, w.comm)
+            sendReq = MPI_OPT1_Worker_SendMapRequest(w.jobBState, false, w.comm)
             w.jobBState.postponed = true
         else
             println("worker $(w.rank) created a local path of length $(length(jobB_solveResult))")
             jobBSolved = true
-            Worker_SendCompletedPath(jobB_solveResult, jobBCompletionTag, w.comm)
+            MPI_OPT1_Worker_SendCompletedPath(jobB_solveResult, jobBCompletionTag, w.comm)
             println("Worker $(w.rank) sent back a path that starts at $(jobB_solveResult[end]) and ends at $(jobB_solveResult[1])")
         end
 
         # Check if Job A's supplement has come in the mail yet.
         if w.jobAState.postponed
-            Worker_ReceiveAndProcessMapRequest!(w.availableTiles, w.comm, w.rank)
+            MPI_OPT1_Worker_ReceiveAndProcessMapRequest!(w.availableTiles, w.comm, w.rank)
             println("Worker $(w.rank) has received its JobA map supplement")
         end
     end
@@ -573,22 +775,6 @@ end
 
 
 
-function MPI_Opt1_WorkerCore(comm, nranks, rank, host)
-    w::WorkerState = Worker_ReceiveInitialMapDataAndJobs(comm, rank)
-
-
-    Worker_CompleteJobPair(w, MPI_OPT1_PATH_DELIVERY_A, MPI_OPT1_PATH_DELIVERY_B)
-
-    # TODO: Job C and D, the beautification pass
-    # The master core needs to recognize that this worker completed both paths, and immediately provide new jobs
-    # The tricky part will be figuring out how to handle the last 
-    # worker, who will have a longer path. Although this will be transparent for the worker.
-
-    println("Worker $(w.rank) is done.")
-    Worker_ReceiveBeautificationJobs!(w)
-    # TODO: Enable this when the master core sends the new deliveries and they're actually received
-    # Worker_CompleteJobPair(w, MPI_OPT1_PATH_DELIVERY_C, MPI_OPT1_PATH)DELIVERY_D
-end
 
 
 
@@ -611,7 +797,7 @@ end
 #
 #
 #
-function AStar_MPI_Opt1(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, maxX::Int32, maxY::Int32, state::WorkerPathfindingState)::Union{Array{MapTile},Nothing}
+function MPI_OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, maxX::Int32, maxY::Int32, state::WorkerPathfindingState)::Union{Array{MapTile},Nothing}
 
     # Declaring this outside so it doesn't get re-allocated every iteration
     neighbors::Array{MapTile} = MapTile[]
@@ -714,65 +900,3 @@ end
 
 
 
-# // ::: -------------------------:: Map Gathering ::------------------------- ::: // 
-#
-#
-#=
-Idea: Take each point along the diagonal, and an arbitrary number of tiles above and below those diagonals.
-Also extend this slightly to the left and the right.
-=#
-function GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile, allTiles::Array{MapTile,2}, verticalEstimationSize::Int32, horizontalExtension::Int32, maxX::Int32, maxY::Int32)::Array{MapTile,1}
-    # TODO: Support this for when wayPointB is BELOW or to the LEFT of wayPointA. Will need some adjustments to the math
-    @assert wayPointA.x <= wayPointB.x && wayPointA.y <= wayPointB.y "WaypointB being below or to the left of wayPoint A is not yet supported"
-    estimatedNecessaryCells = MapTile[]
-    estimatedNecessaryCells_Coordinates = Tuple{Int32,Int32}[]
-    diagonals = Tuple{Int32,Int32}[]
-
-    leftMostX = min(wayPointA.x - horizontalExtension, wayPointB.x - horizontalExtension)
-    if leftMostX < 1
-        leftMostX = 1
-    end
-
-    rightMostX = max(wayPointA.x + horizontalExtension, wayPointB.x + horizontalExtension)
-    if rightMostX > maxX
-        rightMostX = maxX
-    end
-
-    xDifTotal = abs(wayPointA.x - wayPointB.x)
-    yDifTotal = abs(wayPointA.y - wayPointB.y)
-
-    yDifPerX::Float64 = Float64(yDifTotal) / Float64(xDifTotal)
-
-    @assert yDifPerX > 0 "yDifPerX was <= 0, namely $yDifPerX, xDifTotal: $xDifTotal, yDifTotal: $yDifTotal"
-    leftMostY = Int32(wayPointA.y - ((wayPointA.x - leftMostX) * yDifPerX))
-
-    currentDiagonalY::Float64 = leftMostY - yDifPerX
-    for x in leftMostX:rightMostX
-        currentDiagonalY = currentDiagonalY + yDifPerX
-        push!(diagonals, (x, Int32(currentDiagonalY)))
-    end
-
-    for diagonal::Tuple{Int32,Int32} in diagonals
-        # The diagonal itself
-        if diagonal[2] >= 1 && diagonal[2] <= maxY
-            push!(estimatedNecessaryCells_Coordinates, diagonal)
-        end
-        # The tiles above and below the diagonal
-        for i in 1:verticalEstimationSize
-            bottomCoordY = diagonal[2] - i
-            topCoordY = diagonal[2] + i
-            if bottomCoordY >= 1
-                push!(estimatedNecessaryCells_Coordinates, (diagonal[1], bottomCoordY))
-            end
-            if topCoordY <= maxY
-                push!(estimatedNecessaryCells_Coordinates, (diagonal[1], topCoordY))
-            end
-        end
-    end
-
-    for cell in estimatedNecessaryCells_Coordinates
-        push!(estimatedNecessaryCells, allTiles[cell[1], cell[2]])
-    end
-
-    return estimatedNecessaryCells
-end
