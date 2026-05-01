@@ -267,8 +267,6 @@ function HandleKeyboardInput(k::Makie.Keyboard.Button)
     global gUndoDepth
     global gUndoState
 
-    # I honestly don't know what the issue with the savestates was. But it works. Oh well. 
-    s = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), s.done)
 
     saveState::Bool = false
     println("Key was hit! $k")
@@ -362,6 +360,16 @@ function HandleKeyboardInput(k::Makie.Keyboard.Button)
         s.mapTiles[s.cursor.x, s.cursor.y] = CreateDefault(s.cursor.x, s.cursor.y)
         saveState = true
 
+    elseif k == Keyboard.g
+        for mapTile::MutableMapTile in s.mapTiles
+            if mapTile.costToReach == PATHCOST_Wall
+                mapTile.costToReach = PATHCOST_Default
+            elseif mapTile.costToReach == PATHCOST_Default
+                mapTile.costToReach = PATHCOST_Wall
+            end
+        end
+        saveState = true
+
     elseif k == Keyboard.q
         println("Exiting the map builder!")
         s.done = true
@@ -403,6 +411,7 @@ function Redo()
     end
 
     s = gUndoState[gUndoDepth]
+    s = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), s.done)
 end
 
 function Undo()
@@ -416,6 +425,7 @@ function Undo()
     end
 
     s = gUndoState[gUndoDepth]
+    s = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), s.done)
     println("New undo depth: $(gUndoDepth)")
 end
 
@@ -441,10 +451,8 @@ function RunMapBuilder()
 
 
     s = MazeBuildState(1, 1, fig, axis, Cursor(1, 1), mapTiles, false)
-
     stateCopy = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), s.done)
-    push!(gUndoState, s)
-    s = stateCopy
+    push!(gUndoState, stateCopy)
     gUndoDepth = 1
 
     # Handling keyboard events.
