@@ -1,5 +1,7 @@
 using GLMakie
 
+
+
 mutable struct Cursor
     x::Int32
     y::Int32
@@ -22,10 +24,13 @@ mutable struct MazeBuildState
 end
 
 
+s::Union{MazeBuildState,Nothing} = nothing
+gUndoState::Vector{MazeBuildState} = []
+gUndoDepth::Int = 0
 
 
-
-function RenderMapBuild(s::MazeBuildState)
+function RenderMapBuild()
+    global s
     axis = s.mazeAxis
     empty!(axis)
 
@@ -84,8 +89,8 @@ end
 
 
 # Long func, but it works. Was a pain to write.
-function ResizeMaze(s::MazeBuildState, resizeSymbol)
-
+function ResizeMaze(resizeSymbol)
+    global s
     # Adding a row of empty at the top.
     if resizeSymbol == :IncreaseTop
         s.yMax += 1
@@ -228,7 +233,7 @@ function ResizeMaze(s::MazeBuildState, resizeSymbol)
         end
         # Shifting everything left
         for tile::MutableMapTile in newMap
-            tile.x += 1
+            tile.x -= 1
         end
         s.cursor.x -= 1
         s.mapTiles = newMap
@@ -257,7 +262,15 @@ end
 
 
 
-function HandleKeyboardInput(k::Makie.Keyboard.Button, s::MazeBuildState)
+function HandleKeyboardInput(k::Makie.Keyboard.Button)
+    global s
+    global gUndoDepth
+    global gUndoState
+
+    # I honestly don't know what the issue with the savestates was. But it works. Oh well. 
+    s = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), s.done)
+
+    saveState::Bool = false
     println("Key was hit! $k")
     if k == Keyboard.up
         s.cursor.y += 1
@@ -288,46 +301,129 @@ function HandleKeyboardInput(k::Makie.Keyboard.Button, s::MazeBuildState)
 
     elseif k == Keyboard.l
         println("Increasing the map size on the right")
-        ResizeMaze(s, :IncreaseRight)
+        ResizeMaze(:IncreaseRight)
+        saveState = true
 
     elseif k == Keyboard.k
         println("Decreasing the map size on the right")
-        ResizeMaze(s, :DecreaseRight)
+        ResizeMaze(:DecreaseRight)
+        saveState = true
 
     elseif k == Keyboard.j
         println("Increasing the map size on the right")
-        ResizeMaze(s, :IncreaseLeft)
+        ResizeMaze(:IncreaseLeft)
+        saveState = true
     elseif k == Keyboard.h
         println("Decreasing the map size on the right")
-        ResizeMaze(s, :DecreaseLeft)
+        ResizeMaze(:DecreaseLeft)
+        saveState = true
 
     elseif k == Keyboard.i
         println("Increasing the map size on the top")
-        ResizeMaze(s, :IncreaseTop)
+        ResizeMaze(:IncreaseTop)
+        saveState = true
     elseif k == Keyboard.u
         println("Decreasing the map size on the top")
-        ResizeMaze(s, :DecreaseTop)
+        ResizeMaze(:DecreaseTop)
+        saveState = true
 
     elseif k == Keyboard.m
         println("Increasing the map size on the bottom")
-        ResizeMaze(s, :IncreaseBottom)
+        ResizeMaze(:IncreaseBottom)
+        saveState = true
 
     elseif k == Keyboard.n
         println("Decreasing the map size on the bottom")
-        ResizeMaze(s, :DecreaseBottom)
+        ResizeMaze(:DecreaseBottom)
+        saveState = true
 
     elseif k == Keyboard.enter
         println("Placing a wall on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
         s.mapTiles[s.cursor.x, s.cursor.y] = CreateWall(s.cursor.x, s.cursor.y)
+        saveState = true
+
+    elseif k == Keyboard.a
+        println("Placing water on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
+        ConvertToWater!(s.mapTiles[s.cursor.x, s.cursor.y])
+        saveState = true
+
+    elseif k == Keyboard.s
+        println("Placing boostpad on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
+        ConvertToBoostPad!(s.mapTiles[s.cursor.x, s.cursor.y])
+        saveState = true
+
+    elseif k == Keyboard.d
+        println("Placing mud on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
+        ConvertToMud!(s.mapTiles[s.cursor.x, s.cursor.y])
+        saveState = true
+
+    elseif k == Keyboard.f
+        println("Placing empty on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
+        s.mapTiles[s.cursor.x, s.cursor.y] = CreateDefault(s.cursor.x, s.cursor.y)
+        saveState = true
 
     elseif k == Keyboard.q
         println("Exiting the map builder!")
         s.done = true
         # close(scene)
+
+    elseif k == Keyboard.z
+        println("Doing an Undo")
+        Undo()
+    elseif k == Keyboard.y
+        println("Doing a redo")
+        Redo()
+    end
+
+    if saveState
+        # If adding a move and not at the undo tail, discard tail first
+        if gUndoDepth != length(gUndoState)
+            gUndoState = gUndoState[1:gUndoDepth]
+            println("A move was done when not at tail of undo, so old undo tail was dropped")
+        end
+
+        stateCopy = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), s.done)
+        gUndoDepth += 1
+
+        push!(gUndoState, stateCopy)
+        # s = stateCopy
+
+        println("After doing move, undo depth is $(gUndoDepth)")
+
     end
 end
 
+function Redo()
+    global gUndoDepth
+    global gUndoState
+    global s
+    max = length(gUndoState)
+    if max > gUndoDepth
+        gUndoDepth += 1
+    end
+
+    s = gUndoState[gUndoDepth]
+end
+
+function Undo()
+    global gUndoDepth
+    global gUndoState
+    global s
+    println("Old undo depth: $(gUndoDepth)")
+    gUndoDepth -= 1
+    if gUndoDepth <= 1
+        gUndoDepth = 1
+    end
+
+    s = gUndoState[gUndoDepth]
+    println("New undo depth: $(gUndoDepth)")
+end
+
+
 function RunMapBuilder()
+    global s
+    global gUndoDepth
+    global gUndoState
     println("Welcome to the map builder!")
 
     fig = Figure(; size=(1600, 900))
@@ -343,19 +439,31 @@ function RunMapBuilder()
     mapTiles = Matrix{MutableMapTile}(undef, 1, 1)
     mapTiles[1, 1] = CreateDefault(Int32(1), Int32(1))
 
+
     s = MazeBuildState(1, 1, fig, axis, Cursor(1, 1), mapTiles, false)
+
+    stateCopy = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), s.done)
+    push!(gUndoState, s)
+    s = stateCopy
+    gUndoDepth = 1
 
     # Handling keyboard events.
     # https://docs.makie.org/dev/explanations/events
     # scene = Scene(camera=campixel!)
-    RenderMapBuild(s)
+    RenderMapBuild()
 
 
     on(events(fig).keyboardbutton) do event
         keyHit = event.action == Keyboard.press
         keyHit || return
-        HandleKeyboardInput(event.key, s)
-        RenderMapBuild(s)
+        HandleKeyboardInput(event.key)
+        RenderMapBuild()
+
+        while gUndoDepth > 50
+            popfirst!(gUndoState)
+
+            gUndoDepth -= 1
+        end
     end
     # display(scene)
     display(fig)
