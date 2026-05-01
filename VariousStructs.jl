@@ -25,6 +25,10 @@ function MakeImmutable(mutable::MutableMapTile)::MapTile
     return MapTile(mutable.x, mutable.y, costToReach=mutable.costToReach)
 end
 
+# MAkes the maptile printable
+function show(io::IO, tile::MutableMapTile)
+    print(io, "MutableMapTile($(tile.x), $(tile.y), costToReach=$(tile.costToReach))")
+end
 
 # MAkes the maptile printable
 function show(io::IO, tile::MapTile)
@@ -39,4 +43,15 @@ struct ComputedMaze
     wallMapTiles::Array{MapTile}
     pathMapTiles::Array{MapTile}
     allTiles::Array{MapTile,2}
+end
+
+
+
+struct SolvedMaze
+    wallMapTiles::Array{MapTile}
+    pathMapTiles::Array{MapTile}
+    mapBorderTiles::Array{MapTile}
+    shortestPathTiles::Array{MapTile}
+    attemptedPathTiles::Array{MapTile}
+    wayPoints::Array{MapTile}
 end

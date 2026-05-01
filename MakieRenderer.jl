@@ -56,14 +56,7 @@ function SquareAtPoint(axis::Axis, x::Int, y::Int; color=:black, shouldDrawText=
 end
 
 
-function ShowMaze(
-    wallMapTiles::Array{MapTile},
-    pathMapTiles::Array{MapTile},
-    mapBorderTiles::Array{MapTile},
-    shortestPathTiles::Array{MapTile},
-    attemptedPathTiles::Array{MapTile};
-    wayPoints::Array{MapTile}=MapTile[])
-
+function ShowMaze(solvedMaze::SolvedMaze)
     fig = Figure(; size=(1600, 900))
     axis = Axis(fig[1, 1])
 
@@ -72,7 +65,7 @@ function ShowMaze(
     waterPath = MapTile[]
     boostpadPath = MapTile[]
 
-    for tile::MapTile in pathMapTiles
+    for tile::MapTile in solvedMaze.pathMapTiles
         if tile.costToReach == PATHCOST_Mud
             push!(dirtPath, tile)
         elseif tile.costToReach == PATHCOST_Water
@@ -97,24 +90,24 @@ function ShowMaze(
         DrawSquares(axis, boostpadCoords, PATHCOLOR_BoostPad)
     end
 
-    if !isempty(wallMapTiles)
-        walls = [(tile.x, tile.y) for tile in wallMapTiles]
-        # @assert wallMapTiles[1].color == :black "Wall color was $(wallMapTiles[1].color)"
+    if !isempty(solvedMaze.wallMapTiles)
+        walls = [(tile.x, tile.y) for tile in solvedMaze.wallMapTiles]
+        # @assert solvedMaze.wallMapTiles[1].color == :black "Wall color was $(solvedMaze.wallMapTiles[1].color)"
         DrawSquares(axis, walls, PATHCOLOR_Wall)
     end
 
-    if !isempty(mapBorderTiles)
-        borders = [(tile.x, tile.y) for tile in mapBorderTiles]
+    if !isempty(solvedMaze.mapBorderTiles)
+        borders = [(tile.x, tile.y) for tile in solvedMaze.mapBorderTiles]
         DrawSquares(axis, borders, PATHCOLOR_MapBorder)
     end
 
-    if !isempty(shortestPathTiles)
-        spTiles = [(tile.x, tile.y) for tile in shortestPathTiles]
+    if !isempty(solvedMaze.shortestPathTiles)
+        spTiles = [(tile.x, tile.y) for tile in solvedMaze.shortestPathTiles]
         DrawSquares(axis, spTiles, PATHCOLOR_Traversed)
     end
 
-    if !isempty(wayPoints)
-        wayPoints = [(tile.x, tile.y) for tile in wayPoints]
+    if !isempty(solvedMaze.wayPoints)
+        wayPoints = [(tile.x, tile.y) for tile in solvedMaze.wayPoints]
         DrawSquares(axis, wayPoints, PATHCOLOR_WayPoint)
     end
 

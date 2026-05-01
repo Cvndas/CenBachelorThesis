@@ -113,7 +113,7 @@ end
 struct MPI_Opt1_JobRequest
     jobA::MPI_Opt1_Job
     jobB::MPI_Opt1_Job
-    # These are delivered alongside the job.
+    # These are delivered alongside the job for efficiency
     maxX::Int32
     maxY::Int32
 end
@@ -133,6 +133,8 @@ mutable struct MinMaxY
     minY::Int32
     maxY::Int32
 end
+
+
 
 mutable struct MPI_Opt1_WorkerEntry
     workerRank::Int
@@ -539,8 +541,23 @@ function MPI_Opt1_MasterCore(comm, nranks, rank, host, computedMaze::ComputedMaz
 
     println("Reconstructed the initial full path, which has cost $cost_Initial")
     println("Reconstructed the beautified full path, which has cost $cost_Beauty")
-    # initialImg = CenAstar.ShowMaze(s.computedMaze.wallMapTiles, s.computedMaze.pathMapTiles, s.computedMaze.mapBorders, fullPath_Initial, MapTile[], wayPoints=s.initialWayPoints)
-    beautyImg = CenAstar.ShowMaze(s.computedMaze.wallMapTiles, s.computedMaze.pathMapTiles, s.computedMaze.mapBorders, fullPath_Beauty, MapTile[], wayPoints=s.initialWayPoints)
+    initialSolve = SolvedMaze(
+        s.computedMaze.wallMapTiles,
+        s.computedMaze.pathMapTiles,
+        s.computedMaze.mapBorders,
+        fullPath_Beauty,
+        MapTile[],
+        MapTile[])
+    # initialImg = CenAstar.ShowMaze(initialSolve)
+
+    beautySolve = SolvedMaze(
+        s.computedMaze.wallMapTiles,
+        s.computedMaze.pathMapTiles,
+        s.computedMaze.mapBorders,
+        fullPath_Beauty,
+        MapTile[],
+        MapTile[])
+    beautyImg = CenAstar.ShowMaze(beautySolve)
     # // ::: -------------------------:: End of Processing the Results ::------------------------- ::: // 
 end
 
@@ -861,7 +878,6 @@ function MPI_OPT1_Worker_ReceiveBeautificationJobs!(w::WorkerState)
     startTuple = (beautyJob.wayPointA.x, beautyJob.wayPointA.y)
     endTuple = (beautyJob.wayPointB.x, beautyJob.wayPointB.y)
 
-    # TODO: This code is not tested yet
     while (!haskey(w.availableTiles, startTuple) || !haskey(w.availableTiles, endTuple))
         println("Worker $(w.rank) did not have the start or end tuples of the beautification job it just received.")
         mapRequest::MPI_Opt1_MapRequest = MPI_Opt1_MapRequest(beautyJob.wayPointA, beautyJob.wayPointB, false, true)
@@ -955,42 +971,49 @@ function MPI_OPT1_Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobB
 
     println("Worker $(w.rank) will solve paths ($(w.jobAState.startTile), $(w.jobAState.endTile)) and  ($(w.jobBState.startTile), $(w.jobBState.endTile))")
     while !jobASolved || !jobBSolved
-        jobA_solveResult = MPI_OPT1_CustomAStar(w.availableTiles, w.maxX, w.maxY, w.jobAState)
-        if jobA_solveResult === nothing
 
-            println("Worker $(w.rank) needs more data to solve its local path for job A.")
-            sendReq = MPI_OPT1_Worker_SendMapRequest(w.jobAState, true, w.comm)
-            w.jobAState.postponed = true
-        else
-            println("worker $(w.rank) created a local path of length $(length(jobA_solveResult))")
-            jobASolved = true
-            MPI_OPT1_Worker_SendCompletedPath(jobA_solveResult, jobACompletionTag, w.comm)
-            println("Worker $(w.rank) sent back a path that starts at $(jobA_solveResult[end]) and ends at $(jobA_solveResult[1])")
+        if !jobASolved
+            # Check if Job A's supplement has come in the mail yet.
+            if w.jobAState.postponed
+                MPI_OPT1_Worker_ReceiveAndProcessMapRequest!(w.availableTiles, w.comm, w.rank)
+                println("Worker $(w.rank) has received its JobA map supplement")
+            end
+            jobA_solveResult = MPI_OPT1_CustomAStar(w.availableTiles, w.maxX, w.maxY, w.jobAState)
+            if jobA_solveResult === nothing
+                println("Worker $(w.rank) needs more data to solve its local path for job A.")
+                sendReq = MPI_OPT1_Worker_SendMapRequest(w.jobAState, true, w.comm)
+                w.jobAState.postponed = true
+            else
+                println("worker $(w.rank) created a local path of length $(length(jobA_solveResult))")
+                jobASolved = true
+                MPI_OPT1_Worker_SendCompletedPath(jobA_solveResult, jobACompletionTag, w.comm)
+                println("Worker $(w.rank) sent back a path that starts at $(jobA_solveResult[end]) and ends at $(jobA_solveResult[1])")
+            end
+
         end
 
-        # Check if Job B's supplement has come in the mail yet 
-        if w.jobBState.postponed
-            MPI_OPT1_Worker_ReceiveAndProcessMapRequest!(w.availableTiles, w.comm, w.rank)
-            println("Worker $(w.rank) has received its JobB map supplement")
+
+        if !jobBSolved
+
+            # Check if Job B's supplement has come in the mail yet 
+            if w.jobBState.postponed
+                MPI_OPT1_Worker_ReceiveAndProcessMapRequest!(w.availableTiles, w.comm, w.rank)
+                println("Worker $(w.rank) has received its JobB map supplement")
+            end
+            jobB_solveResult = MPI_OPT1_CustomAStar(w.availableTiles, w.maxX, w.maxY, w.jobBState)
+            if jobB_solveResult === nothing
+                println("Worker $(w.rank) needs more data to solve its local path for job B.")
+                sendReq = MPI_OPT1_Worker_SendMapRequest(w.jobBState, false, w.comm)
+                w.jobBState.postponed = true
+            else
+                println("worker $(w.rank) created a local path of length $(length(jobB_solveResult))")
+                jobBSolved = true
+                MPI_OPT1_Worker_SendCompletedPath(jobB_solveResult, jobBCompletionTag, w.comm)
+                println("Worker $(w.rank) sent back a path that starts at $(jobB_solveResult[end]) and ends at $(jobB_solveResult[1])")
+            end
+
         end
 
-        jobB_solveResult = MPI_OPT1_CustomAStar(w.availableTiles, w.maxX, w.maxY, w.jobBState)
-        if jobB_solveResult === nothing
-            println("Worker $(w.rank) needs more data to solve its local path for job B.")
-            sendReq = MPI_OPT1_Worker_SendMapRequest(w.jobBState, false, w.comm)
-            w.jobBState.postponed = true
-        else
-            println("worker $(w.rank) created a local path of length $(length(jobB_solveResult))")
-            jobBSolved = true
-            MPI_OPT1_Worker_SendCompletedPath(jobB_solveResult, jobBCompletionTag, w.comm)
-            println("Worker $(w.rank) sent back a path that starts at $(jobB_solveResult[end]) and ends at $(jobB_solveResult[1])")
-        end
-
-        # Check if Job A's supplement has come in the mail yet.
-        if w.jobAState.postponed
-            MPI_OPT1_Worker_ReceiveAndProcessMapRequest!(w.availableTiles, w.comm, w.rank)
-            println("Worker $(w.rank) has received its JobA map supplement")
-        end
     end
 
 end

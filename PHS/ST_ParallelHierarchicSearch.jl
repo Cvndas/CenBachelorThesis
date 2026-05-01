@@ -17,7 +17,8 @@ function SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
         attemptedPathTiles = MapTile[]
 
         println("Path is done. Going to render the maze now.")
-        mazeImage = CenAstar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
+        error("This func is old and probably doesn't work anymore, or is not representative of either the naive or opt1 PHS implementations.")
+        # mazeImage = CenAstar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
 
         mpiPhsCost = ComputePathCost(shortestPathTiles)
 

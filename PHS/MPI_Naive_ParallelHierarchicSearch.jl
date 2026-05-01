@@ -129,14 +129,6 @@ function MPI_Naive_PhsMasterCore(comm, nranks, rank, host, initialMapData::MPI_N
         println("Master rank received a beautified path with $(length(beautificationPath)) maptiles from $(status.source) with tag $(status.tag)")
     end
 
-
-    #= 
-    TODO: Who is going to save the new path at the end? Maybe the last core. Alternatively,
-    the last path could just be extended so that one core just does a little more. Or alternatively,
-    the waypoints could be spread out more evenly, so there is still an equal number
-    of paths during the beautification step.
-    =#
-
     fullPath_Initial::Array{MapTile,1} = reduce(vcat, localPaths)
     fullPath_Beautified::Array{MapTile,1} = reduce(vcat, beautificationPaths)
 
@@ -146,8 +138,15 @@ function MPI_Naive_PhsMasterCore(comm, nranks, rank, host, initialMapData::MPI_N
     println("\n--- THE RESULTS ---\n")
     println("Reconstructed the initial full path, which has cost $cost_Initial")
     println("Reconstructed the beautified full path, which has cost $cost_Beautified")
+    solved = SolvedMaze(
+        computedMaze.wallMapTiles,
+        computedMaze.pathMapTiles,
+        computedMaze.mapBorders,
+        fullPath_Beautified,
+        MapTile[],
+        MapTile[])
 
-    _ = CenAstar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, fullPath_Beautified, MapTile[])
+    _ = CenAstar.ShowMaze(solved)
 end
 
 

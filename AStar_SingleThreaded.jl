@@ -60,7 +60,6 @@ function st_AStar(startTile::MapTile, endTile::MapTile, allTiles::Array{MapTile,
             # if DEBUG_CoordinateOnlyCompare(currentTile, endTile) # TODO: Re-enable if cameFrom[] does not contain the end tile, then debug
             @assert currentTile.costToReach == endTile.costToReach "Cost to reach mismatch: $(currentTile.costToReach) vs $(endTile.costToReach)"
             @assert currentTile === endTile "The values were equal, but the reference wasn't."
-            # TODO: Discovered the bug. values are equal, references are not. This causes key missing from cameFrom[] in ConstructPath
             break
         end
 
