@@ -34,8 +34,8 @@ include("PHS/PHS_Shared.jl")
 include("PHS/ST_ParallelHierarchicSearch.jl")
 include("MapBuilder/MapBuilder.jl")
 
-const MAZE_SIZE_X = 200
-const MAZE_SIZE_Y = 200
+# const MAZE_SIZE_X = 200
+# const MAZE_SIZE_Y = 200
 
 #=
 This is a module file. Its purpose is to include the other files that make up CenAstar
@@ -71,11 +71,12 @@ end
 
 
 function ComputeMaze()::ComputedMaze
+    config = include("Config.jl")
     println("\n\n--- GENERATING A MAZE --\n")
     xMin::Int32 = 1
-    xMax::Int32 = MAZE_SIZE_X
+    xMax::Int32 = config.MAZE_SIZE_X
     yMin::Int32 = 1
-    yMax::Int32 = MAZE_SIZE_Y
+    yMax::Int32 = config.MAZE_SIZE_Y
 
     @assert xMin == 1 # Never Change
     @assert yMin == 1 # Never Change
@@ -126,7 +127,9 @@ end
 
 
 function InitializeSeed()
-    seed = 5
+    config = include("Config.jl")
+    seed = config.seed
+    # seed = 5
     if seed < 0
         seed = Int(round(time()))
     end

@@ -1,4 +1,5 @@
 using GLMakie
+using Serialization
 
 
 
@@ -476,10 +477,14 @@ function RunMapBuilder()
     # display(scene)
     display(fig)
 
+    # TODO: Waypoints and serialization.
 
     while s.done == false
         sleep(0.5)
     end
     println("Broke out of the sleeping loop")
+
+    mkpath("Custom Maps")
+
     GLMakie.closeall()
 end

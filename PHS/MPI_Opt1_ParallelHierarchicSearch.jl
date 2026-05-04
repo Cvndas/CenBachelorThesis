@@ -480,7 +480,7 @@ end
 function MPI_Opt1_Entry(comm, nranks, rank, host)
     if rank == 0
         println("Entered MPI_Opt1_PhsEntry")
-        CenAstar.Initialize()
+        CenAstar.InitializeSeed()
         computedMaze::ComputedMaze = ComputeMaze()
     end
 

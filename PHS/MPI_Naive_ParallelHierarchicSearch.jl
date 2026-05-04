@@ -226,7 +226,7 @@ end
 function MPI_Naive_PhsEntry(comm, nranks, rank, host)
     if rank == 0
         println("Entered MPI_Naive_PhsEntry()")
-        CenAstar.Initialize() # only initializes the seed, for now.
+        CenAstar.InitializeSeed() # only initializes the seed, for now.
         computedMaze::ComputedMaze = ComputeMaze()
         initialMapData::MPI_Naive_PhsMapData = MPI_Naive_PhsMapData(computedMaze.allTiles, nothing, nothing)
     end

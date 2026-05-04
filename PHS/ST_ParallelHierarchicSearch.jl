@@ -5,7 +5,7 @@ using MPI
 function SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
 
     if rank == 0
-        CenAstar.Initialize()
+        CenAstar.InitializeSeed()
         println("Entered main_MPI_ParallelHierarchicSearch()")
         computedMaze::ComputedMaze = ComputeMaze()
         # allPathsDict = Dict{Tuple{Int,Int},MapTile}()
