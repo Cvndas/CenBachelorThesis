@@ -41,6 +41,7 @@ struct ComputedMaze
     # traversablePaths::Array{MapTile}
     mapBorders::Array{MapTile}
     allTiles::Array{MapTile,2}
+    optionalWaypoints::Array{MapTile,1}
 end
 
 
@@ -55,8 +56,8 @@ end
 
 
 struct SavedMaze
-    xMax
-    yMax
+    xMax::Int32
+    yMax::Int32
     mapTiles::Matrix{MutableMapTile}
     wayPoints::Vector{Tuple{Int32,Int32}}
 end

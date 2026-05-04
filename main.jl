@@ -1,4 +1,4 @@
-module Cen
+# module Cen
 include("CenAstar.jl")
 using .CenAstar
 using MPI
@@ -12,7 +12,7 @@ end
 
 
 #= run in the julia repl with
-include("main.jl"); Cen.main_MPI_ParallelHierarchicSearch_HandcraftedMaps();
+include("main.jl"); main_MPI_ParallelHierarchicSearch_HandcraftedMaps();
 =#
 function main_MPI_ParallelHierarchicSearch_HandcraftedMaps()
     Clear()
@@ -43,7 +43,7 @@ end
 
 
 #= run in the julia repl with
-include("main.jl"); Cen.main_MPI_ParallelHierarchicSearch();
+include("main.jl"); main_MPI_ParallelHierarchicSearch();
 =#
 function main_MPI_ParallelHierarchicSearch()
     Clear()
@@ -73,12 +73,12 @@ function main_MPI_ParallelHierarchicSearch()
 end
 
 #= run in the julia repl with
-include("main.jl"); Cen.main_MapBuilder();
+include("main.jl"); main_MapBuilder();
 =#
 function main_MapBuilder(; mapToEdit::String="")
     Clear()
     CenAstar.InitializeSeed()
-    RunMapBuilder(mapToEdit)
+    CenAstar.RunMapBuilder(mapToEdit)
 
     println("Exiting main()")
 end
@@ -87,7 +87,7 @@ end
 
 
 #= run with
-include("main.jl"); Cen.main_SingleThreadedAStar();
+include("main.jl"); main_SingleThreadedAStar();
  =#
 function main_SingleThreadedAStar()
     Clear()
@@ -122,4 +122,4 @@ function main_SingleThreadedAStar()
 end
 
 #Module Cen End
-end
+# end

@@ -139,7 +139,6 @@ function MPI_Naive_PhsMasterCore(comm, nranks, rank, host, initialMapData::MPI_N
     println("Reconstructed the initial full path, which has cost $cost_Initial")
     println("Reconstructed the beautified full path, which has cost $cost_Beautified")
     solved = SolvedMaze(
-        computedMaze.wallMapTiles,
         computedMaze.pathMapTiles,
         computedMaze.mapBorders,
         fullPath_Beautified,

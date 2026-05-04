@@ -482,7 +482,7 @@ function MPI_Opt1_Entry(comm, nranks, rank, host, handcraftedTestMap::Bool)
         println("Entered MPI_Opt1_PhsEntry")
         CenAstar.InitializeSeed()
         if handcraftedTestMap == true
-            computedMaze::ComputedMaze = LoadMap("Map1")
+            computedMaze::ComputedMaze = LoadMap("DebugMap_1")
         else
             computedMaze = ComputeMaze()
         end
@@ -583,7 +583,15 @@ function MPI_OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::Comput
     maxY::Int32 = Int32(size(computedMaze.allTiles, 2))
 
     # Let's first generate some waypoints, as these determine what data the workers need
-    initialWayPoints::Array{MapTile} = GenerateInitialWaypoints(computedMaze.startTile, computedMaze.endTile, (nranks - 1) * 2, computedMaze.allTiles)
+    initialWayPoints::Array{MapTile} = []
+    if length(computedMaze.optionalWaypoints) == 0
+        initialWayPoints = GenerateInitialWaypoints(computedMaze.startTile, computedMaze.endTile, (nranks - 1) * 2, computedMaze.allTiles)
+        println("Generated automatic waypoints")
+    else
+        initialWayPoints = GenerateCoreAppropriateWaypoints(computedMaze.optionalWaypoints, computedMaze.allTiles, nranks)
+        println("Loaded the waypoints from the map")
+    end
+
     initialPaths::Vector{Tuple{MapTile,MapTile}} = Tuple{MapTile,MapTile}[]
     for i in 1:length(initialWayPoints)-1
         push!(initialPaths, (initialWayPoints[i], initialWayPoints[i+1]))
@@ -762,7 +770,7 @@ end
 function MPI_OPT1_Master_SendInitialJobs(s::MasterState, paths::Vector{Tuple{MapTile,MapTile}})
     pendingSends::Vector{MPI.Request} = MPI.Request[]
     pathIndex = 1
-    @assert length(paths) == 2 * (s.nranks - 1)
+    @assert length(paths) == 2 * (s.nranks - 1) "length of paths was $(length(paths)) and rhs was $(2*(s.nranks - 1))"
     for i in 1:s.nranks-1 # for each rank
         pathA = paths[pathIndex]
 

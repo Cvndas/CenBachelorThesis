@@ -13,8 +13,8 @@ function show(io::IO, cursor::Cursor)
 end
 
 mutable struct MazeBuildState
-    xMax
-    yMax
+    xMax::Int32
+    yMax::Int32
     fig
     mazeAxis
     cursor::Cursor
@@ -40,6 +40,9 @@ end
 
 function RenderMapBuild()
     global s
+
+    start = time()
+
     axis = s.mazeAxis
     empty!(axis)
 
@@ -70,20 +73,23 @@ function RenderMapBuild()
         end
     end
 
+    dirtCoords = [(tile.x, tile.y) for tile in dirtPath]
+    waterCoords = [(tile.x, tile.y) for tile in waterPath]
+    boostpadCoords = [(tile.x, tile.y) for tile in boostpadPath]
+    wa = [(tile.x, tile.y) for tile in walls]
+
+    # println("Sorting the maptiles took $(time() - start) seconds")
+
     if !isempty(dirtPath)
-        dirtCoords = [(tile.x, tile.y) for tile in dirtPath]
         DrawSquares(axis, dirtCoords, PATHCOLOR_Mud)
     end
     if !isempty(waterPath)
-        waterCoords = [(tile.x, tile.y) for tile in waterPath]
         DrawSquares(axis, waterCoords, PATHCOLOR_Water)
     end
     if !isempty(boostpadPath)
-        boostpadCoords = [(tile.x, tile.y) for tile in boostpadPath]
         DrawSquares(axis, boostpadCoords, PATHCOLOR_BoostPad)
     end
     if !isempty(walls)
-        wa = [(tile.x, tile.y) for tile in walls]
         DrawSquares(axis, wa, PATHCOLOR_Wall)
     end
 
@@ -98,8 +104,10 @@ function RenderMapBuild()
     DrawOutline(axis, (s.cursor.x, s.cursor.y), :green, 0.1)
     # DrawSquares(axis, [(s.cursor.x, s.cursor.y)], :green)
 
+
     resize_to_layout!(s.fig)
     display(s.fig)
+    println("Drawing the maptiles took $(time() - start) seconds")
 end
 
 
@@ -561,7 +569,7 @@ function RunMapBuilder(mapToEdit::String)
             push!(wayPoints, (Int32(-1), Int32(-1)))
         end
 
-        s = MazeBuildState(1, 1, fig, axis, Cursor(1, 1), mapTiles, wayPoints, false)
+        s = MazeBuildState(Int32(1), Int32(1), fig, axis, Cursor(1, 1), mapTiles, wayPoints, false)
 
         # Editing an existing map
     else

@@ -17,7 +17,7 @@ export RunMapBuilder
 include("VariousStructs.jl")
 
 
-# using Serialization
+using Serialization
 include("Utilities.jl")
 
 
@@ -34,6 +34,7 @@ include("PHS/PHS_Shared.jl")
 include("PHS/ST_ParallelHierarchicSearch.jl")
 include("MapBuilder/MapBuilder.jl")
 
+export LoadMap
 
 #=
 This is a module file. Its purpose is to include the other files that make up CenAstar
@@ -83,7 +84,7 @@ function LoadMap(mapName::String)
 
     for mutableMapTile in loaded.mapTiles
         asImmutable::MapTile = MakeImmutable(mutableMapTile)
-        push!(traversablePaths, asImmutable)
+        # push!(traversablePaths, asImmutable)
         traversablePaths_Dict[(mutableMapTile.x, mutableMapTile.y)] = asImmutable
 
         allMapTiles[mutableMapTile.x, mutableMapTile.y] = asImmutable
@@ -99,13 +100,17 @@ function LoadMap(mapName::String)
     startTile::MapTile = wayPoints[1]
     endTile::MapTile = wayPoints[end]
 
-    mapBorders::Array{MapTile} = GenerateMapBorders(1, loaded.xMax, 1, loaded.yMax)
+    mapBordersMutable::Array{MutableMapTile} = GenerateMapBorders(Int32(1), loaded.xMax, Int32(1), loaded.yMax)
+    mapBorders::Array{MapTile} = []
+    for mut in mapBordersMutable
+        push!(mapBorders, MakeImmutable(mut))
+    end
     return ComputedMaze(
         startTile,
         endTile,
         mapBorders,
-        allMapTiles
-    )
+        allMapTiles,
+        wayPoints)
 end
 
 
@@ -156,7 +161,7 @@ function ComputeMaze()::ComputedMaze
         allTiles2DArray[path.x, path.y] = path
     end
 
-    computedMaze::ComputedMaze = ComputedMaze(startTile, endTile, mapBorders, allTiles2DArray)
+    computedMaze::ComputedMaze = ComputedMaze(startTile, endTile, mapBorders, allTiles2DArray, [])
     println("\n--- MAZE GENERATION DONE --\n\n")
     return computedMaze
 end
