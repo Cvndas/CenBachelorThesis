@@ -68,6 +68,47 @@ function FindExistingMapTile(x, y, existingTiles::Array{MutableMapTile})
 end
 
 
+function LoadMap(mapName::String)
+
+    dir = "Custom Maps"
+    path = joinpath(dir, mapName * ".map")
+
+    loaded::SavedMaze = open(path, "r") do file
+        deserialize(file)
+    end
+
+    wayPoints::Array{MapTile,1} = []
+
+    traversablePaths_Dict = Dict{Tuple{Int32,Int32},MapTile}()
+
+    allMapTiles::Array{MapTile,2} = Array{MapTile,2}(undef, loaded.xMax, loaded.yMax)
+
+    for mutableMapTile in loaded.mapTiles
+        asImmutable::MapTile = MakeImmutable(mutableMapTile)
+        push!(traversablePaths, asImmutable)
+        traversablePaths_Dict[(mutableMapTile.x, mutableMapTile.y)] = asImmutable
+
+        allMapTiles[mutableMapTile.x, mutableMapTile.y] = asImmutable
+    end
+
+    WayPointExists = (wayPoint::Tuple{Int32,Int32}) -> wayPoint[1] >= 1 && wayPoint[2] >= 1
+    for wayPoint::Tuple{Int32,Int32} in loaded.wayPoints
+        if WayPointExists(wayPoint)
+            push!(wayPoints, traversablePaths_Dict[wayPoint])
+        end
+    end
+
+    startTile::MapTile = wayPoints[1]
+    endTile::MapTile = wayPoints[end]
+
+    mapBorders::Array{MapTile} = GenerateMapBorders(1, loaded.xMax, 1, loaded.yMax)
+    return ComputedMaze(
+        startTile,
+        endTile,
+        mapBorders,
+        allMapTiles
+    )
+end
 
 
 function ComputeMaze()::ComputedMaze
@@ -109,15 +150,15 @@ function ComputeMaze()::ComputedMaze
     endTile = MakeImmutable(mutable_endTile)
     traversablePaths = CreateImmutableMapTileArray(mutable_traversablePaths)
     mapBorders = CreateImmutableMapTileArray(mutable_mapBorders)
-    wallMapTiles = CreateImmutableMapTileArray(mutable_wallMapTiles)
-    pathMapTiles = CreateImmutableMapTileArray(mutable_pathMapTiles)
+    # wallMapTiles = CreateImmutableMapTileArray(mutable_wallMapTiles)
+    # pathMapTiles = CreateImmutableMapTileArray(mutable_pathMapTiles)
 
     allTiles2DArray = Array{MapTile,2}(undef, width, height)
     for path::MapTile in traversablePaths
         allTiles2DArray[path.x, path.y] = path
     end
 
-    computedMaze::ComputedMaze = ComputedMaze(startTile, endTile, traversablePaths, mapBorders, wallMapTiles, pathMapTiles, allTiles2DArray)
+    computedMaze::ComputedMaze = ComputedMaze(startTile, endTile, mapBorders, allTiles2DArray)
     println("\n--- MAZE GENERATION DONE --\n\n")
     return computedMaze
 end

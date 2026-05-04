@@ -477,11 +477,15 @@ end
 #
 #
 #
-function MPI_Opt1_Entry(comm, nranks, rank, host)
+function MPI_Opt1_Entry(comm, nranks, rank, host, handcraftedTestMap::Bool)
     if rank == 0
         println("Entered MPI_Opt1_PhsEntry")
         CenAstar.InitializeSeed()
-        computedMaze::ComputedMaze = ComputeMaze()
+        if handcraftedTestMap == true
+            computedMaze::ComputedMaze = LoadMap("Map1")
+        else
+            computedMaze = ComputeMaze()
+        end
     end
 
     MPI.Barrier(comm)
@@ -542,8 +546,7 @@ function MPI_Opt1_MasterCore(comm, nranks, rank, host, computedMaze::ComputedMaz
     println("Reconstructed the initial full path, which has cost $cost_Initial")
     println("Reconstructed the beautified full path, which has cost $cost_Beauty")
     initialSolve = SolvedMaze(
-        s.computedMaze.wallMapTiles,
-        s.computedMaze.pathMapTiles,
+        s.computedMaze.allTiles,
         s.computedMaze.mapBorders,
         fullPath_Beauty,
         MapTile[],
@@ -551,8 +554,7 @@ function MPI_Opt1_MasterCore(comm, nranks, rank, host, computedMaze::ComputedMaz
     # initialImg = CenAstar.ShowMaze(initialSolve)
 
     beautySolve = SolvedMaze(
-        s.computedMaze.wallMapTiles,
-        s.computedMaze.pathMapTiles,
+        s.computedMaze.allTiles,
         s.computedMaze.mapBorders,
         fullPath_Beauty,
         MapTile[],

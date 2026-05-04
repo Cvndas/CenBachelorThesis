@@ -38,20 +38,25 @@ end
 struct ComputedMaze
     startTile::MapTile
     endTile::MapTile
-    traversablePaths::Array{MapTile}
+    # traversablePaths::Array{MapTile}
     mapBorders::Array{MapTile}
-    wallMapTiles::Array{MapTile}
-    pathMapTiles::Array{MapTile}
     allTiles::Array{MapTile,2}
 end
 
 
 
 struct SolvedMaze
-    wallMapTiles::Array{MapTile}
-    pathMapTiles::Array{MapTile}
+    pathMapTiles::Array{MapTile,2}
     mapBorderTiles::Array{MapTile}
     shortestPathTiles::Array{MapTile}
     attemptedPathTiles::Array{MapTile}
     wayPoints::Array{MapTile}
+end
+
+
+struct SavedMaze
+    xMax
+    yMax
+    mapTiles::Matrix{MutableMapTile}
+    wayPoints::Vector{Tuple{Int32,Int32}}
 end

@@ -132,6 +132,7 @@ function ShowMaze(solvedMaze::SolvedMaze)
     dirtPath = MapTile[]
     waterPath = MapTile[]
     boostpadPath = MapTile[]
+    wallMapTiles = MapTile[]
 
     for tile::MapTile in solvedMaze.pathMapTiles
         if tile.costToReach == PATHCOST_Mud
@@ -140,6 +141,8 @@ function ShowMaze(solvedMaze::SolvedMaze)
             push!(waterPath, tile)
         elseif tile.costToReach == PATHCOST_BoostPad
             push!(boostpadPath, tile)
+        elseif tile.costToReach == PATHCOST_Wall
+            push!(wallMapTiles, tile)
         end
     end
 
@@ -158,8 +161,8 @@ function ShowMaze(solvedMaze::SolvedMaze)
         DrawSquares(axis, boostpadCoords, PATHCOLOR_BoostPad)
     end
 
-    if !isempty(solvedMaze.wallMapTiles)
-        walls = [(tile.x, tile.y) for tile in solvedMaze.wallMapTiles]
+    if !isempty(wallMapTiles)
+        walls = [(tile.x, tile.y) for tile in wallMapTiles]
         # @assert solvedMaze.wallMapTiles[1].color == :black "Wall color was $(solvedMaze.wallMapTiles[1].color)"
         DrawSquares(axis, walls, PATHCOLOR_Wall)
     end

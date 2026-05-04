@@ -10,6 +10,38 @@ function Clear()
     print("\33[2J\33[H")
 end
 
+
+#= run in the julia repl with
+include("main.jl"); Cen.main_MPI_ParallelHierarchicSearch_HandcraftedMaps();
+=#
+function main_MPI_ParallelHierarchicSearch_HandcraftedMaps()
+    Clear()
+    println("Started main()")
+    code = quote
+        using MPI
+        include("CenAstar.jl")
+        using .CenAstar
+
+        MPI.Init()
+        comm = MPI.Comm_dup(MPI.COMM_WORLD)
+        nranks = MPI.Comm_size(comm)
+        rank = MPI.Comm_rank(comm)
+        host = MPI.Get_processor_name()
+        println("Hello from $host, I am process $rank of $nranks processes!")
+        # CenAstar.MPI_Naive_PhsEntry(comm, nranks, rank, host)
+        CenAstar.MPI_Opt1_Entry(comm, nranks, rank, host, true)
+        # CenAstar.SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
+        MPI.Finalize()
+    end
+    # run(`$(mpiexec()) -np 8 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
+    # run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
+    # run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
+
+
+end
+
+
 #= run in the julia repl with
 include("main.jl"); Cen.main_MPI_ParallelHierarchicSearch();
 =#
@@ -28,7 +60,7 @@ function main_MPI_ParallelHierarchicSearch()
         host = MPI.Get_processor_name()
         println("Hello from $host, I am process $rank of $nranks processes!")
         # CenAstar.MPI_Naive_PhsEntry(comm, nranks, rank, host)
-        CenAstar.MPI_Opt1_Entry(comm, nranks, rank, host)
+        CenAstar.MPI_Opt1_Entry(comm, nranks, rank, host, false)
         # CenAstar.SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
         MPI.Finalize()
     end

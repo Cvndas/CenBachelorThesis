@@ -27,12 +27,6 @@ mutable struct MazeBuildState
     # TODO: Add start and end points too 
 end
 
-struct SavedMaze
-    xMax
-    yMax
-    mapTiles::Matrix{MutableMapTile}
-    wayPoints::Vector{Tuple{Int32,Int32}}
-end
 
 
 s::Union{MazeBuildState,Nothing} = nothing
@@ -93,6 +87,7 @@ function RenderMapBuild()
         DrawSquares(axis, wa, PATHCOLOR_Wall)
     end
 
+    WayPointExists = (wayPoint::Tuple{Int32,Int32}) -> wayPoint[1] >= 1 && wayPoint[2] >= 1
     for (i, wayPoint) in enumerate(s.wayPoints)
         if WayPointExists(wayPoint)
             DrawOutline(axis, wayPoint, :purple, 0.2, text="w$i")
@@ -510,8 +505,8 @@ function SaveMap()
     mkpath("Custom Maps")
     path = joinpath(dir, gMapName * ".map")
 
-    open(path, "w") do f
-        serialize(f, saveData)
+    open(path, "w") do file
+        serialize(file, saveData)
     end
 
     println("Saved gMapName to $path")
