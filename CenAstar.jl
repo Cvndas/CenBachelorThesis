@@ -34,8 +34,6 @@ include("PHS/PHS_Shared.jl")
 include("PHS/ST_ParallelHierarchicSearch.jl")
 include("MapBuilder/MapBuilder.jl")
 
-# const MAZE_SIZE_X = 200
-# const MAZE_SIZE_Y = 200
 
 #=
 This is a module file. Its purpose is to include the other files that make up CenAstar

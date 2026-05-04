@@ -489,7 +489,7 @@ function SaveMap()
     global s
 
     if gMapName == ""
-        println("Provided a map name, or input t to discard")
+        println("Please provide a map name, or input t to discard")
         input = readline()
         if input == "t"
             return
@@ -512,8 +512,18 @@ function SaveMap()
     println("Saved gMapName to $path")
 end
 
+function LoadMapToEdit(mapName::String)
+    dir = "Custom Maps"
+    path = joinpath(dir, mapName * ".map")
 
-function RunMapBuilder()
+    loaded::SavedMaze = open(path, "r") do file
+        deserialize(file)
+    end
+    return loaded
+end
+
+
+function RunMapBuilder(mapToEdit::String)
     global s
     global gUndoDepth
     global gUndoState
@@ -541,16 +551,24 @@ function RunMapBuilder()
     # hidedecorations!(textAxis)
     axis.aspect = DataAspect()
 
-    mapTiles = Matrix{MutableMapTile}(undef, 1, 1)
-    mapTiles[1, 1] = CreateDefault(Int32(1), Int32(1))
+    # Starting fresh
+    if mapToEdit == ""
+        mapTiles = Matrix{MutableMapTile}(undef, 1, 1)
+        mapTiles[1, 1] = CreateDefault(Int32(1), Int32(1))
 
-    wayPoints::Vector{Tuple{Int32,Int32}} = []
-    for _ in 1:9
-        push!(wayPoints, (Int32(-1), Int32(-1)))
+        wayPoints::Vector{Tuple{Int32,Int32}} = []
+        for _ in 1:9
+            push!(wayPoints, (Int32(-1), Int32(-1)))
+        end
+
+        s = MazeBuildState(1, 1, fig, axis, Cursor(1, 1), mapTiles, wayPoints, false)
+
+        # Editing an existing map
+    else
+        loaded::SavedMaze = LoadMapToEdit(mapToEdit)
+        s = MazeBuildState(loaded.xMax, loaded.yMax, fig, axis, Cursor(1, 1), loaded.mapTiles, loaded.wayPoints, false)
     end
 
-
-    s = MazeBuildState(1, 1, fig, axis, Cursor(1, 1), mapTiles, wayPoints, false)
     stateCopy = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), deepcopy(s.wayPoints), s.done)
     push!(gUndoState, stateCopy)
     gUndoDepth = 1

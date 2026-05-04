@@ -75,10 +75,10 @@ end
 #= run in the julia repl with
 include("main.jl"); Cen.main_MapBuilder();
 =#
-function main_MapBuilder()
+function main_MapBuilder(; mapToEdit::String="")
     Clear()
     CenAstar.InitializeSeed()
-    RunMapBuilder()
+    RunMapBuilder(mapToEdit)
 
     println("Exiting main()")
 end
@@ -108,7 +108,7 @@ function main_SingleThreadedAStar()
     attemptedPathTiles = MapTile[]
 
     println("Path is done. Going to render the maze now.")
-    mazeImage = CenAstar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
+    # mazeImage = CenAstar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
     # save("mazeImage.png", mazeImage)
     # TODO: Make ShowMaze return a figure, so I can put them side by side, give them a title, etc.
     ComputePathCost = path -> sum(tile.costToReach for tile::MapTile in path)
