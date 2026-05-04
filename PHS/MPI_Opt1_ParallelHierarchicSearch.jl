@@ -296,7 +296,6 @@ end
 
 # A function that took quite a few calories to write
 function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile, allTiles::Array{MapTile,2}, verticalEstimationSize::Int32, horizontalExtensionSize::Int32, maxX::Int32, maxY::Int32, sentMinMax::Array{Union{MinMaxY,Nothing}})::Array{MapTile,1}
-    # TODO: Support this for when wayPointB is BELOW or to the LEFT of wayPointA. Will need some adjustments to the math
     println("~~~Going to get the estimated necessary cells for a path between $wayPointA and $wayPointB")
     # println("~~~Vertical estimation size: $verticalEstimationSize, horizontalExtensionSize: $horizontalExtensionSize")
 
@@ -304,27 +303,25 @@ function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapT
     DEBUG_totalConsidered::Int = 0
 
     # // ::: -------------------------:: Creating the diagonals ::------------------------- ::: // 
-    leftWayPoint::MapTile = if wayPointA.x < wayPointB.x
-        wayPointA
+    if wayPointA.x < wayPointB.x
+        leftWayPoint = wayPointA
+        rightWayPoint = wayPointB
     else
-        wayPointB
+        leftWayPoint = wayPointB
+        rightWayPoint = wayPointA
     end
 
-    wayPointXDif = abs(wayPointA.x - wayPointB.x)
-    slope::Float64 = if wayPointA.y < wayPointB.y
-        (wayPointB.y - wayPointA.y) / wayPointXDif
-    else
-        (wayPointA.y - wayPointB.y) / wayPointXDif
-    end
-    # println("~~~Computed a slope of $slope")
+    wayPointXDif = rightWayPoint.x - leftWayPoint.x
+    slope::Float64 = (rightWayPoint.y - leftWayPoint.y) / wayPointXDif
+    println("~~~Computed a slope of $slope")
 
     diagonals = Tuple{Int32,Int32}[]
 
-    leftMostX = min(wayPointA.x, wayPointB.x)
+    leftMostX = leftWayPoint.x
     leftMostX -= horizontalExtensionSize
     leftMostX = clamp(leftMostX, Int32(1), maxX)
 
-    rightMostX = max(wayPointA.x, wayPointB.x)
+    rightMostX = rightWayPoint.x
     rightMostX += horizontalExtensionSize
     rightMostX = clamp(rightMostX, Int32(1), maxX)
 
@@ -359,6 +356,7 @@ function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapT
         end
 
         columnMinMax = sentMinMax[diagonal[1]]
+
         if columnMinMax === nothing
             for v in lowest:highest
                 push!(coordinates, (diagonal[1], v))
@@ -367,6 +365,19 @@ function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapT
             sentMinMax[diagonal[1]] = newColumnMinMax
 
         else # If the sentMinMax did exist for this column, use that to selectively gather tiles to send
+            #=
+            These two if checks exist to deal with disjoint ranges. 
+            =#
+            if highest < columnMinMax.minY
+                println("______Bugfix on HIGHEST, where disjoint ranges lead to incorrect bookkeeping of which tiles were sent")
+                highest = columnMinMax.minY
+            end
+            if lowest > columnMinMax.maxY
+                println("______Bugfix on LOWEST, where disjoint ranges lead to incorrect bookkeeping of which tiles were sent")
+                lowest = columnMinMax.maxY
+            end
+
+
             for v in lowest:highest
                 if v < columnMinMax.minY || v > columnMinMax.maxY
                     push!(coordinates, (diagonal[1], v))
@@ -399,67 +410,6 @@ function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapT
     return mapTilePackage
 end
 
-
-
-
-#=
-Idea: Take each point along the diagonal, and an arbitrary number of tiles above and below those diagonals.
-Also extend this slightly to the left and the right.
-=#
-function OLD_MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile, allTiles::Array{MapTile,2}, verticalEstimationSize::Int32, horizontalExtension::Int32, maxX::Int32, maxY::Int32)::Array{MapTile,1}
-    @assert wayPointA.x <= wayPointB.x && wayPointA.y <= wayPointB.y "WaypointB being below or to the left of wayPoint A is not yet supported"
-    estimatedNecessaryCells = MapTile[]
-    estimatedNecessaryCells_Coordinates = Tuple{Int32,Int32}[]
-    diagonals = Tuple{Int32,Int32}[]
-
-    leftMostX = min(wayPointA.x - horizontalExtension, wayPointB.x - horizontalExtension)
-    if leftMostX < 1
-        leftMostX = 1
-    end
-
-    rightMostX = max(wayPointA.x + horizontalExtension, wayPointB.x + horizontalExtension)
-    if rightMostX > maxX
-        rightMostX = maxX
-    end
-
-    xDifTotal = abs(wayPointA.x - wayPointB.x)
-    yDifTotal = abs(wayPointA.y - wayPointB.y)
-
-    yDifPerX::Float64 = Float64(yDifTotal) / Float64(xDifTotal)
-
-    @assert yDifPerX > 0 "yDifPerX was <= 0, namely $yDifPerX, xDifTotal: $xDifTotal, yDifTotal: $yDifTotal"
-    leftMostY = Int32(wayPointA.y - ((wayPointA.x - leftMostX) * yDifPerX))
-
-    currentDiagonalY::Float64 = leftMostY - yDifPerX
-    for x in leftMostX:rightMostX
-        currentDiagonalY = currentDiagonalY + yDifPerX
-        push!(diagonals, (x, Int32(currentDiagonalY)))
-    end
-
-    for diagonal::Tuple{Int32,Int32} in diagonals
-        # The diagonal itself
-        if diagonal[2] >= 1 && diagonal[2] <= maxY
-            push!(estimatedNecessaryCells_Coordinates, diagonal)
-        end
-        # The tiles above and below the diagonal
-        for i in 1:verticalEstimationSize
-            bottomCoordY = diagonal[2] - i
-            topCoordY = diagonal[2] + i
-            if bottomCoordY >= 1
-                push!(estimatedNecessaryCells_Coordinates, (diagonal[1], bottomCoordY))
-            end
-            if topCoordY <= maxY
-                push!(estimatedNecessaryCells_Coordinates, (diagonal[1], topCoordY))
-            end
-        end
-    end
-
-    for cell in estimatedNecessaryCells_Coordinates
-        push!(estimatedNecessaryCells, allTiles[cell[1], cell[2]])
-    end
-
-    return estimatedNecessaryCells
-end
 
 
 
@@ -551,7 +501,7 @@ function MPI_Opt1_MasterCore(comm, nranks, rank, host, computedMaze::ComputedMaz
         fullPath_Beauty,
         MapTile[],
         MapTile[])
-    # initialImg = CenAstar.ShowMaze(initialSolve)
+    initialImg = CenAstar.ShowMaze(initialSolve)
 
     beautySolve = SolvedMaze(
         s.computedMaze.allTiles,
@@ -559,7 +509,7 @@ function MPI_Opt1_MasterCore(comm, nranks, rank, host, computedMaze::ComputedMaz
         fullPath_Beauty,
         MapTile[],
         MapTile[])
-    beautyImg = CenAstar.ShowMaze(beautySolve)
+    # beautyImg = CenAstar.ShowMaze(beautySolve)
     # // ::: -------------------------:: End of Processing the Results ::------------------------- ::: // 
 end
 
@@ -686,7 +636,7 @@ function MPI_OPT1_SendBeautificationJob(s::MasterState, worker)
 
     elseif isFirstWorker
         beautyStartTile = own.solvedPathA[end]
-        @assert beautyStartTile.x == 1 && beautyStartTile.y == 1 "I believed that solved pathA had 1 1 at the end of the array, due to construction order. The first entry of the array though was $(own.solvedPathA[1])"
+        # @assert beautyStartTile.x == 1 && beautyStartTile.y == 1 "I believed that solved pathA had 1 1 at the end of the array, due to construction order. The first entry of the array though was $(own.solvedPathA[1])"
         beautyEndTile = GetMiddleElementOfArray(own.solvedPathB)
 
     elseif isMiddleWorker
@@ -1069,7 +1019,10 @@ function MPI_OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, 
             northX = state.currentTile.x
             north = get(availableTiles, (northX, northY), nothing)
             if north === nothing
-                # println("Failed to find the northtile with ($northX, $northY)")
+                println("Failed to find the northtile with ($northX, $northY)")
+                println("The worker has $(length(keys(availableTiles))) tiles")
+                # println("The tiles worker does have:")
+                # display(availableTiles)
                 return false
             end
             push!(neighbors, north)
@@ -1080,7 +1033,10 @@ function MPI_OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, 
             eastY = state.currentTile.y
             east = get(availableTiles, (eastX, eastY), nothing)
             if east === nothing
-                # println("Failed to find the easttile with ($eastX, $eastY)")
+                println("Failed to find the easttile with ($eastX, $eastY)")
+                println("The worker has $(length(keys(availableTiles))) tiles")
+                # println("The tiles worker does have:")
+                # display(availableTiles)
                 return false
             end
             push!(neighbors, east)
@@ -1091,7 +1047,10 @@ function MPI_OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, 
             southX = state.currentTile.x
             south = get(availableTiles, (southX, southY), nothing)
             if south === nothing
-                # println("Failed to find the southtile with ($southX, $southY)")
+                println("Failed to find the southtile with ($southX, $southY)")
+                println("The worker has $(length(keys(availableTiles))) tiles")
+                # println("The tiles worker does have:")
+                # display(availableTiles)
                 return false
             end
             push!(neighbors, south)
@@ -1102,7 +1061,10 @@ function MPI_OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, 
             westY = state.currentTile.y
             west = get(availableTiles, (westX, westY), nothing)
             if west === nothing
-                # println("Failed to find the westtile with ($westX, $westY)")
+                println("Failed to find the westtile with ($westX, $westY)")
+                println("The worker has $(length(keys(availableTiles))) tiles")
+                # println("The tiles worker does have:")
+                # display(availableTiles)
                 return false
             end
             push!(neighbors, west)

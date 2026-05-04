@@ -34,9 +34,9 @@ function main_MPI_ParallelHierarchicSearch_HandcraftedMaps()
         MPI.Finalize()
     end
     # run(`$(mpiexec()) -np 8 julia --project=. -e $code`)
-    run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
+    # run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
     # run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
-    # run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
 
 
 end

@@ -3,6 +3,7 @@ function GenerateCoreAppropriateWaypoints(hardcodedWaypoints::Array{MapTile,1}, 
     workerCoreCount = nranks - 1
 
     println("Starting with $(length(hardcodedWaypoints)) waypoints, and going to divide them among $workerCoreCount cores")
+    display(hardcodedWaypoints)
 
     #= Idea: First form straight paths between each hardcoded waypoint. Load these into an array. Then grab 
              waypoints from this array.
@@ -80,6 +81,9 @@ function GenerateCoreAppropriateWaypoints(hardcodedWaypoints::Array{MapTile,1}, 
 
     println("--- Created the core-appropriate waypoints. There are $(length(allWayPoints)) of them. In order:")
     display(allWayPoints)
+
+    # TODO Next Sesh: Make this assertion not fail.
+    @assert allWayPoints[1] == hardcodedWaypoints[1] && allWayPoints[end] == hardcodedWaypoints[end] "hardcoded start: $(hardcodedWaypoints[1]) and core-appropriate start: $(allWayPoints[1]), hardcoded end: $(hardcodedWaypoints[end]) and core-appropriate end: $(allWayPoints[end])"
 
     return allWayPoints
 end
