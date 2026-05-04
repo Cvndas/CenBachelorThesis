@@ -24,10 +24,18 @@ mutable struct MazeBuildState
     # TODO: Add start and end points too 
 end
 
+struct SavedMaze
+    xMax
+    yMax
+    cursor::Cursor
+    mapTiles::Matrix{MutableMapTile}
+end
+
 
 s::Union{MazeBuildState,Nothing} = nothing
 gUndoState::Vector{MazeBuildState} = []
 gUndoDepth::Int = 0
+gMapName::String = ""
 
 
 function RenderMapBuild()
@@ -267,101 +275,102 @@ function HandleKeyboardInput(k::Makie.Keyboard.Button)
     global s
     global gUndoDepth
     global gUndoState
+    global gMapNameProvided
 
 
     saveState::Bool = false
-    println("Key was hit! $k")
+    # println("Key was hit! $k")
     if k == Keyboard.up
         s.cursor.y += 1
         if s.cursor.y > s.yMax
             s.cursor.y = s.yMax
         end
-        println("The cursor is on $(s.cursor)")
+        # println("The cursor is on $(s.cursor)")
     elseif k == Keyboard.down
         s.cursor.y -= 1
         if s.cursor.y < 1
             s.cursor.y = 1
         end
-        println("The cursor is on $(s.cursor)")
+        # println("The cursor is on $(s.cursor)")
 
     elseif k == Keyboard.left
         s.cursor.x -= 1
         if s.cursor.x < 1
             s.cursor.x = 1
         end
-        println("The cursor is on $(s.cursor)")
+        # println("The cursor is on $(s.cursor)")
 
     elseif k == Keyboard.right
         s.cursor.x += 1
         if s.cursor.x > s.xMax
             s.cursor.x = s.xMax
         end
-        println("The cursor is on $(s.cursor)")
+        # println("The cursor is on $(s.cursor)")
 
     elseif k == Keyboard.l
-        println("Increasing the map size on the right")
+        # println("Increasing the map size on the right")
         ResizeMaze(:IncreaseRight)
         saveState = true
 
     elseif k == Keyboard.k
-        println("Decreasing the map size on the right")
+        # println("Decreasing the map size on the right")
         ResizeMaze(:DecreaseRight)
         saveState = true
 
     elseif k == Keyboard.j
-        println("Increasing the map size on the right")
+        # println("Increasing the map size on the right")
         ResizeMaze(:IncreaseLeft)
         saveState = true
     elseif k == Keyboard.h
-        println("Decreasing the map size on the right")
+        # println("Decreasing the map size on the right")
         ResizeMaze(:DecreaseLeft)
         saveState = true
 
     elseif k == Keyboard.i
-        println("Increasing the map size on the top")
+        # println("Increasing the map size on the top")
         ResizeMaze(:IncreaseTop)
         saveState = true
     elseif k == Keyboard.u
-        println("Decreasing the map size on the top")
+        # println("Decreasing the map size on the top")
         ResizeMaze(:DecreaseTop)
         saveState = true
 
     elseif k == Keyboard.m
-        println("Increasing the map size on the bottom")
+        # println("Increasing the map size on the bottom")
         ResizeMaze(:IncreaseBottom)
         saveState = true
 
     elseif k == Keyboard.n
-        println("Decreasing the map size on the bottom")
+        # println("Decreasing the map size on the bottom")
         ResizeMaze(:DecreaseBottom)
         saveState = true
 
-    elseif k == Keyboard.enter
-        println("Placing a wall on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
+    elseif k == Keyboard.g
+        # println("Placing a wall on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
         s.mapTiles[s.cursor.x, s.cursor.y] = CreateWall(s.cursor.x, s.cursor.y)
         saveState = true
 
     elseif k == Keyboard.a
-        println("Placing water on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
+        # println("Placing water on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
         ConvertToWater!(s.mapTiles[s.cursor.x, s.cursor.y])
         saveState = true
 
     elseif k == Keyboard.s
-        println("Placing boostpad on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
+        # println("Placing boostpad on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
         ConvertToBoostPad!(s.mapTiles[s.cursor.x, s.cursor.y])
         saveState = true
 
     elseif k == Keyboard.d
-        println("Placing mud on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
+        # println("Placing mud on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
         ConvertToMud!(s.mapTiles[s.cursor.x, s.cursor.y])
         saveState = true
 
     elseif k == Keyboard.f
-        println("Placing empty on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
+        # println("Placing empty on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
         s.mapTiles[s.cursor.x, s.cursor.y] = CreateDefault(s.cursor.x, s.cursor.y)
         saveState = true
 
-    elseif k == Keyboard.g
+    elseif k == Keyboard.p
         for mapTile::MutableMapTile in s.mapTiles
             if mapTile.costToReach == PATHCOST_Wall
                 mapTile.costToReach = PATHCOST_Default
@@ -372,9 +381,12 @@ function HandleKeyboardInput(k::Makie.Keyboard.Button)
         saveState = true
 
     elseif k == Keyboard.q
-        println("Exiting the map builder!")
+        # SaveMap()
+        println("Exiting!")
         s.done = true
-        # close(scene)
+
+    elseif k == Keyboard.w
+        SaveMap()
 
     elseif k == Keyboard.z
         println("Doing an Undo")
@@ -384,11 +396,17 @@ function HandleKeyboardInput(k::Makie.Keyboard.Button)
         Redo()
     end
 
+    # if currentMoveWasQuit
+    #     s.previousMoveWasQuit = true
+    # else
+    #     s.previousMoveWasQuit = false
+    # end
+
     if saveState
         # If adding a move and not at the undo tail, discard tail first
         if gUndoDepth != length(gUndoState)
             gUndoState = gUndoState[1:gUndoDepth]
-            println("A move was done when not at tail of undo, so old undo tail was dropped")
+            # println("A move was done when not at tail of undo, so old undo tail was dropped")
         end
 
         stateCopy = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), s.done)
@@ -397,7 +415,7 @@ function HandleKeyboardInput(k::Makie.Keyboard.Button)
         push!(gUndoState, stateCopy)
         # s = stateCopy
 
-        println("After doing move, undo depth is $(gUndoDepth)")
+        # println("After doing move, undo depth is $(gUndoDepth)")
 
     end
 end
@@ -419,7 +437,7 @@ function Undo()
     global gUndoDepth
     global gUndoState
     global s
-    println("Old undo depth: $(gUndoDepth)")
+    # println("Old undo depth: $(gUndoDepth)")
     gUndoDepth -= 1
     if gUndoDepth <= 1
         gUndoDepth = 1
@@ -427,7 +445,38 @@ function Undo()
 
     s = gUndoState[gUndoDepth]
     s = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), s.done)
-    println("New undo depth: $(gUndoDepth)")
+    # println("New undo depth: $(gUndoDepth)")
+end
+
+
+
+
+function SaveMap()
+    global gMapName
+    global s
+
+    if gMapName == ""
+        println("Provided a map name, or input t to discard")
+        input = readline()
+        if input == "t"
+            return
+        else
+            gMapName = input
+        end
+    end
+
+    saveData = SavedMaze(s.xMax, s.yMax, s.cursor, deepcopy(s.mapTiles))
+
+    @assert gMapName != "" "Map name was not set in SaveMap()"
+    dir = "Custom Maps"
+    mkpath("Custom Maps")
+    path = joinpath(dir, gMapName * ".map")
+
+    open(path, "w") do f
+        serialize(f, saveData)
+    end
+
+    println("Saved gMapName to $path")
 end
 
 
@@ -435,16 +484,27 @@ function RunMapBuilder()
     global s
     global gUndoDepth
     global gUndoState
+    global gMapName
     println("Welcome to the map builder!")
+    println("Controls: \n",
+        "i & u: resize top of map\n",
+        "n & m: resize bottom of map\n",
+        "k & l: resize right of map\n",
+        "h & l: resize left of map\n",
+        "a: water, s: boostpad, d: dirt, f: default, g: wall\n",
+        "p: Flip Default and Wall\n",
+        "z: undo, y: redo\n",
+        "q: quit\n"
+    )
 
     fig = Figure(; size=(1600, 900))
     axis = Axis(fig[1, 1])
 
-    textAxis = Axis(fig[1, 2])
-    text!(textAxis, "Map Builder")
+    # textAxis = Axis(fig[1, 2])
+    # text!(textAxis, "Map Builder")
 
     hidedecorations!(axis)
-    hidedecorations!(textAxis)
+    # hidedecorations!(textAxis)
     axis.aspect = DataAspect()
 
     mapTiles = Matrix{MutableMapTile}(undef, 1, 1)
@@ -482,9 +542,12 @@ function RunMapBuilder()
     while s.done == false
         sleep(0.5)
     end
+
+    SaveMap()
+
+
     println("Broke out of the sleeping loop")
 
-    mkpath("Custom Maps")
 
     GLMakie.closeall()
 end
