@@ -26,6 +26,74 @@ function DrawSquares(axis::Axis, coordinates::Array{Tuple{Int32,Int32}}, color)
     poly!(axis, squaresAsPolys, color=color)
 end
 
+function CreateOutline(coord::Tuple{Int32,Int32}, thickness)
+    outlineAsPolys = []
+    x = coord[1]
+    y = coord[2]
+
+    # Bottom row poly
+    bottomRow_left = (x, y)
+    bottomRow_right = (x + 1, y)
+    bottomRow_topLeft = (x, y + thickness)
+    bottomRow_topRight = (x + 1, y + thickness)
+    bottomRowPoly = Polygon(Point2f[bottomRow_left, bottomRow_right, bottomRow_topRight, bottomRow_topLeft])
+
+    # Top row poly
+    topRow_left = (x, y + 1)
+    topRow_right = (x + 1, y + 1)
+    topRow_bottomLeft = (x, y + 1 - thickness)
+    topRow_bottomRight = (x + 1, y + 1 - thickness)
+    topRowPoly = Polygon(Point2f[topRow_bottomLeft, topRow_bottomRight, topRow_right, topRow_left])
+
+    # Left Column poly
+    leftCol_bottomLeft = (x, y)
+    leftCol_bottomRight = (x + thickness, y)
+    leftCol_topLeft = (x, y + 1)
+    leftCol_topRight = (x + thickness, y + 1)
+    leftColPoly = Polygon(Point2f[leftCol_bottomLeft, leftCol_bottomRight, leftCol_topRight, leftCol_topLeft])
+
+    # Right Column poly
+    rightCol_bottomRight = (x + 1, y)
+    rightCol_topRight = (x + 1, y + 1)
+    rightCol_topLeft = (x + 1 - thickness, y + 1)
+    rightCol_bottomLeft = (x + 1 - thickness, y)
+    rightColPoly = Polygon(Point2f[rightCol_bottomLeft, rightCol_bottomRight, rightCol_topRight, rightCol_topLeft])
+
+
+    push!(outlineAsPolys, bottomRowPoly)
+    push!(outlineAsPolys, topRowPoly)
+    push!(outlineAsPolys, leftColPoly)
+    push!(outlineAsPolys, rightColPoly)
+
+    return outlineAsPolys
+end
+
+
+
+
+function DrawOutline(axis::Axis, coord::Tuple{Int32,Int32}, color, thickness; text="")
+    asPoly = CreateOutline(coord, thickness)
+    poly!(axis, asPoly, color=color)
+
+
+    if text != ""
+        x = coord[1]
+        y = coord[2]
+        text!(axis, text, position=(x + 0.2, y + 0.3))
+    end
+end
+
+
+
+
+function DrawOutlines(axis::Axis, coordinates::Array{Tuple{Int32,Int32}}, color, thickness)
+    outlinesAsPolys::Vector{Tuple{Int32,Int32}} = []
+    for coord in coordinates
+        vcat(outlinesAsPolys, CreateOutline(coord, thickness))
+    end
+    poly!(axis, outlinesAsPolys, color=color)
+end
+
 
 
 

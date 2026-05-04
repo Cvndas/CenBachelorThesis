@@ -19,6 +19,9 @@ mutable struct MazeBuildState
     mazeAxis
     cursor::Cursor
     mapTiles::Matrix{MutableMapTile}
+
+    # Set to (-1, -1) if it doesn't exist
+    wayPoints::Vector{Tuple{Int32,Int32}}
     done::Bool
     # TODO: Add waypoints too
     # TODO: Add start and end points too 
@@ -27,8 +30,8 @@ end
 struct SavedMaze
     xMax
     yMax
-    cursor::Cursor
     mapTiles::Matrix{MutableMapTile}
+    wayPoints::Vector{Tuple{Int32,Int32}}
 end
 
 
@@ -37,6 +40,9 @@ gUndoState::Vector{MazeBuildState} = []
 gUndoDepth::Int = 0
 gMapName::String = ""
 
+function WayPointExists(wayPoint::Tuple{Int32,Int32})
+    return wayPoint[1] >= 1 && wayPoint[2] >= 1
+end
 
 function RenderMapBuild()
     global s
@@ -87,8 +93,15 @@ function RenderMapBuild()
         DrawSquares(axis, wa, PATHCOLOR_Wall)
     end
 
+    for (i, wayPoint) in enumerate(s.wayPoints)
+        if WayPointExists(wayPoint)
+            DrawOutline(axis, wayPoint, :purple, 0.2, text="w$i")
+        end
+    end
+
     DrawSquares(axis, borders, PATHCOLOR_MapBorder)
-    DrawSquares(axis, [(s.cursor.x, s.cursor.y)], :green)
+    DrawOutline(axis, (s.cursor.x, s.cursor.y), :green, 0.1)
+    # DrawSquares(axis, [(s.cursor.x, s.cursor.y)], :green)
 
     resize_to_layout!(s.fig)
     display(s.fig)
@@ -348,27 +361,27 @@ function HandleKeyboardInput(k::Makie.Keyboard.Button)
     elseif k == Keyboard.g
         # println("Placing a wall on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
         s.mapTiles[s.cursor.x, s.cursor.y] = CreateWall(s.cursor.x, s.cursor.y)
-        saveState = true
+        # saveState = true
 
     elseif k == Keyboard.a
         # println("Placing water on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
         ConvertToWater!(s.mapTiles[s.cursor.x, s.cursor.y])
-        saveState = true
+        # saveState = true
 
     elseif k == Keyboard.s
         # println("Placing boostpad on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
         ConvertToBoostPad!(s.mapTiles[s.cursor.x, s.cursor.y])
-        saveState = true
+        # saveState = true
 
     elseif k == Keyboard.d
         # println("Placing mud on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
         ConvertToMud!(s.mapTiles[s.cursor.x, s.cursor.y])
-        saveState = true
+        # saveState = true
 
     elseif k == Keyboard.f
         # println("Placing empty on tile $(s.mapTiles[s.cursor.x, s.cursor.y])")
         s.mapTiles[s.cursor.x, s.cursor.y] = CreateDefault(s.cursor.x, s.cursor.y)
-        saveState = true
+        # saveState = true
 
     elseif k == Keyboard.p
         for mapTile::MutableMapTile in s.mapTiles
@@ -378,7 +391,32 @@ function HandleKeyboardInput(k::Makie.Keyboard.Button)
                 mapTile.costToReach = PATHCOST_Wall
             end
         end
-        saveState = true
+        # saveState = true
+
+    elseif k == Keyboard._1
+        s.wayPoints[1] = (s.cursor.x, s.cursor.y)
+    elseif k == Keyboard._2
+        s.wayPoints[2] = (s.cursor.x, s.cursor.y)
+    elseif k == Keyboard._3
+        s.wayPoints[3] = (s.cursor.x, s.cursor.y)
+    elseif k == Keyboard._4
+        s.wayPoints[4] = (s.cursor.x, s.cursor.y)
+    elseif k == Keyboard._5
+        s.wayPoints[5] = (s.cursor.x, s.cursor.y)
+    elseif k == Keyboard._6
+        s.wayPoints[6] = (s.cursor.x, s.cursor.y)
+    elseif k == Keyboard._7
+        s.wayPoints[7] = (s.cursor.x, s.cursor.y)
+    elseif k == Keyboard._8
+        s.wayPoints[8] = (s.cursor.x, s.cursor.y)
+    elseif k == Keyboard._9
+        s.wayPoints[9] = (s.cursor.x, s.cursor.y)
+    elseif k == Keyboard._0
+        for (i, wayPoint) in enumerate(s.wayPoints)
+            if wayPoint[1] == s.cursor.x && wayPoint[2] == s.cursor.y
+                s.wayPoints[i] = (Int32(-1), Int32(-1))
+            end
+        end
 
     elseif k == Keyboard.q
         # SaveMap()
@@ -409,7 +447,7 @@ function HandleKeyboardInput(k::Makie.Keyboard.Button)
             # println("A move was done when not at tail of undo, so old undo tail was dropped")
         end
 
-        stateCopy = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), s.done)
+        stateCopy = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), deepcopy(s.wayPoints), s.done)
         gUndoDepth += 1
 
         push!(gUndoState, stateCopy)
@@ -430,7 +468,7 @@ function Redo()
     end
 
     s = gUndoState[gUndoDepth]
-    s = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), s.done)
+    s = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), deepcopy(s.wayPoints), s.done)
 end
 
 function Undo()
@@ -444,7 +482,7 @@ function Undo()
     end
 
     s = gUndoState[gUndoDepth]
-    s = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), s.done)
+    s = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), deepcopy(s.wayPoints), s.done)
     # println("New undo depth: $(gUndoDepth)")
 end
 
@@ -465,7 +503,7 @@ function SaveMap()
         end
     end
 
-    saveData = SavedMaze(s.xMax, s.yMax, s.cursor, deepcopy(s.mapTiles))
+    saveData = SavedMaze(s.xMax, s.yMax, deepcopy(s.mapTiles), deepcopy(s.wayPoints))
 
     @assert gMapName != "" "Map name was not set in SaveMap()"
     dir = "Custom Maps"
@@ -491,6 +529,7 @@ function RunMapBuilder()
         "n & m: resize bottom of map\n",
         "k & l: resize right of map\n",
         "h & l: resize left of map\n",
+        "1 - 10: Waypoints, 0 to clear waypoint on cursor\n",
         "a: water, s: boostpad, d: dirt, f: default, g: wall\n",
         "p: Flip Default and Wall\n",
         "z: undo, y: redo\n",
@@ -510,9 +549,14 @@ function RunMapBuilder()
     mapTiles = Matrix{MutableMapTile}(undef, 1, 1)
     mapTiles[1, 1] = CreateDefault(Int32(1), Int32(1))
 
+    wayPoints::Vector{Tuple{Int32,Int32}} = []
+    for _ in 1:9
+        push!(wayPoints, (Int32(-1), Int32(-1)))
+    end
 
-    s = MazeBuildState(1, 1, fig, axis, Cursor(1, 1), mapTiles, false)
-    stateCopy = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), s.done)
+
+    s = MazeBuildState(1, 1, fig, axis, Cursor(1, 1), mapTiles, wayPoints, false)
+    stateCopy = MazeBuildState(s.xMax, s.yMax, s.fig, s.mazeAxis, deepcopy(s.cursor), deepcopy(s.mapTiles), deepcopy(s.wayPoints), s.done)
     push!(gUndoState, stateCopy)
     gUndoDepth = 1
 
