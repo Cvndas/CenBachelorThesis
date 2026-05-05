@@ -1,5 +1,6 @@
 using GLMakie
 using Serialization
+using Colors
 
 
 
@@ -37,6 +38,141 @@ gMapName::String = ""
 function WayPointExists(wayPoint::Tuple{Int32,Int32})
     return wayPoint[1] >= 1 && wayPoint[2] >= 1
 end
+
+
+
+#= 
+This function was proompted via Deepseek. My original RenderMapBuild() is fine for everything
+like 
+=#
+
+function RenderMapBuild_ProomptedVersion()
+    global s
+
+    axis = s.mazeAxis
+    empty!(axis)
+
+    # Create a matrix that includes borders: size (xMax+2) x (yMax+2)
+    colors = Matrix{RGBA{Float32}}(undef, s.xMax + 2, s.yMax + 2)
+
+    # Fill interior tiles (offset by +1 because matrix index 1 corresponds to x=0, y=0)
+    for x in 1:s.xMax
+        for y in 1:s.yMax
+            tile = s.mapTiles[x, y]
+            if tile.costToReach == PATHCOST_Default
+                colors[x+1, y+1] = RGBA(0.9, 0.9, 0.9, 1.0)
+            elseif tile.costToReach == PATHCOST_Mud
+                colors[x+1, y+1] = RGBA(0.545, 0.270, 0.075, 1.0)
+            elseif tile.costToReach == PATHCOST_Water
+                colors[x+1, y+1] = RGBA(0.118, 0.565, 1.0, 1.0)
+            elseif tile.costToReach == PATHCOST_BoostPad
+                colors[x+1, y+1] = RGBA(1.0, 0.843, 0.0, 1.0)
+            elseif tile.costToReach == PATHCOST_Wall
+                colors[x+1, y+1] = RGBA(0.0, 0.0, 0.0, 1.0)
+            else
+                colors[x+1, y+1] = RGBA(1.0, 0.0, 1.0, 1.0)
+            end
+        end
+    end
+
+    # Fill border rows and columns (using the same border color as before)
+    borderColor = RGBA(0.5, 0.5, 0.5, 1.0)   # change to your actual PATHCOLOR_MapBorder if needed
+
+    # Left and right borders (x = 0 and x = xMax+1)
+    for y in 0:(s.yMax+1)
+        colors[1, y+1] = borderColor          # left border (x=0)
+        colors[end, y+1] = borderColor        # right border (x=xMax+1)
+    end
+
+    # Top and bottom borders (y = 0 and y = yMax+1) – corners already set
+    for x in 0:(s.xMax+1)
+        colors[x+1, 1] = borderColor          # bottom border (y=0)
+        colors[x+1, end] = borderColor        # top border (y=yMax+1)
+    end
+
+    # Draw everything as a single image over the full range:
+    # x from 0 to xMax+2, y from 0 to yMax+2 (each of length xMax+2, yMax+2)
+    image!(axis, 0 .. (s.xMax + 2), 0 .. (s.yMax + 2), colors; interpolate=false)
+
+    # Draw waypoints (only up to 9)
+    for (i, wayPoint) in enumerate(s.wayPoints)
+        if WayPointExists(wayPoint)
+            DrawOutline(axis, wayPoint, :purple, 0.2, text="w$i")
+        end
+    end
+
+    # Draw cursor
+    DrawOutline(axis, (s.cursor.x, s.cursor.y), :green, 0.1)
+
+    resize_to_layout!(s.fig)
+    display(s.fig)
+end
+# function RenderMapBuild_ProomptedVersion()
+#     global s
+
+#     axis = s.mazeAxis
+#     empty!(axis)
+
+
+#     # ─────────────────────────────────────────────────────────
+#     # 1. Draw the entire tile grid as a single image
+#     # ─────────────────────────────────────────────────────────
+#     colors = Matrix{RGBA{Float32}}(undef, s.xMax, s.yMax)
+#     for x in 1:s.xMax
+#         for y in 1:s.yMax
+#             tile = s.mapTiles[x, y]
+#             if tile.costToReach == PATHCOST_Default
+#                 colors[x, y] = RGBA(0.9, 0.9, 0.9, 1.0)          # light gray
+#             elseif tile.costToReach == PATHCOST_Mud
+#                 colors[x, y] = RGBA(0.545, 0.270, 0.075, 1.0)    # saddlebrown
+#             elseif tile.costToReach == PATHCOST_Water
+#                 colors[x, y] = RGBA(0.118, 0.565, 1.0, 1.0)       # steelblue
+#             elseif tile.costToReach == PATHCOST_BoostPad
+#                 colors[x, y] = RGBA(1.0, 0.843, 0.0, 1.0)         # gold
+#             elseif tile.costToReach == PATHCOST_Wall
+#                 colors[x, y] = RGBA(0.0, 0.0, 0.0, 1.0)           # black
+#             else
+#                 colors[x, y] = RGBA(1.0, 0.0, 1.0, 1.0)           # magenta (error)
+#             end
+#         end
+#     end
+#     # image! expects (x_range, y_range, matrix) where matrix[x,y] gives color
+#     # image!(axis, 1 .. s.xMax, 1 .. s.yMax, colors; interpolate=false)
+#     image!(axis, 1 .. (s.xMax + 1), 1 .. (s.yMax + 1), colors; interpolate=false)
+
+#     # ─────────────────────────────────────────────────────────
+#     # 2. Draw borders (only O(N) points, still fast)
+#     # ─────────────────────────────────────────────────────────
+#     borders = Tuple{Int32,Int32}[]
+#     for borderX in 0:s.xMax+1
+#         push!(borders, (Int32(borderX), Int32(0)))
+#         push!(borders, (Int32(borderX), Int32(s.yMax + 1)))
+#     end
+#     for borderY in 0:s.yMax+1
+#         push!(borders, (Int32(0), Int32(borderY)))
+#         push!(borders, (Int32(s.xMax + 1), Int32(borderY)))
+#     end
+#     DrawSquares(axis, borders, PATHCOLOR_MapBorder)
+
+#     # ─────────────────────────────────────────────────────────
+#     # 3. Draw waypoints (only up to 9)
+#     # ─────────────────────────────────────────────────────────
+#     for (i, wayPoint) in enumerate(s.wayPoints)
+#         if WayPointExists(wayPoint)
+#             DrawOutline(axis, wayPoint, :purple, 0.2, text="w$i")
+#         end
+#     end
+
+#     # ─────────────────────────────────────────────────────────
+#     # 4. Draw cursor (single outline)
+#     # ─────────────────────────────────────────────────────────
+#     DrawOutline(axis, (s.cursor.x, s.cursor.y), :green, 0.1)
+
+#     resize_to_layout!(s.fig)
+#     display(s.fig)
+# end
+
+
 
 function RenderMapBuild()
     global s
@@ -592,14 +728,16 @@ function RunMapBuilder(mapToEdit::String)
     # Handling keyboard events.
     # https://docs.makie.org/dev/explanations/events
     # scene = Scene(camera=campixel!)
-    RenderMapBuild()
+    # RenderMapBuild()
+    RenderMapBuild_ProomptedVersion()
 
 
     on(events(fig).keyboardbutton) do event
         keyHit = event.action == Keyboard.press
         keyHit || return
         HandleKeyboardInput(event.key)
-        RenderMapBuild()
+        # RenderMapBuild()
+        RenderMapBuild_ProomptedVersion()
 
         while gUndoDepth > 50
             popfirst!(gUndoState)

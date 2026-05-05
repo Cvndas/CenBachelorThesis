@@ -52,6 +52,8 @@ struct SolvedMaze
     shortestPathTiles::Array{MapTile}
     attemptedPathTiles::Array{MapTile}
     wayPoints::Array{MapTile}
+    startPoint::Tuple{Int32,Int32}
+    endPoint::Tuple{Int32,Int32}
 end
 
 

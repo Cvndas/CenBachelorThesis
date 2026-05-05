@@ -270,6 +270,20 @@ function MPI_OPT1_UpdateRecord(record::MPI_Opt1_WorkerEntry, mapRequest::MPI_Opt
 end
 
 
+function DeduplicateFinalPath(inputPath::Array{MapTile,1})
+    asDict = Dict{Tuple{Int32,Int32},MapTile}()
+    dupes = 0
+    for inputTile in inputPath
+        if !haskey(asDict, inputTile)
+            asDict[(inputTile.x, inputTile.y)] = inputTile
+        else
+            dupes += 1
+        end
+    end
+    println("THERE WERE $dupes DUPLICATES IN THE PATH")
+
+    return inputPath
+end
 
 
 function MPI_OPT1_AllInitialSolvedPathsAreReceived(workerRecords::Array{MPI_Opt1_WorkerEntry})
@@ -471,7 +485,8 @@ function MPI_Opt1_Entry(comm, nranks, rank, host, handcraftedTestMap::Bool)
         println("Entered MPI_Opt1_PhsEntry")
         CenAstar.InitializeSeed()
         if handcraftedTestMap == true
-            computedMaze::ComputedMaze = LoadMap("DebugMap_1")
+            # computedMaze::ComputedMaze = LoadMap("DebugMap_1")
+            computedMaze::ComputedMaze = LoadMap("BigMap_1")
         else
             computedMaze = ComputeMaze()
         end
@@ -527,6 +542,7 @@ function MPI_Opt1_MasterCore(comm, nranks, rank, host, computedMaze::ComputedMaz
     println("\n\n--- THE RESULTS ---\n")
     println("The results were reached with a final level of $(s.currentLevel)")
     fullPath_Initial::Array{MapTile,1} = reduce(vcat, s.solved_initialPaths)
+    fullPath_Initial = DeduplicateFinalPath(fullPath_Initial)
     cost_Initial = ComputePathCost(fullPath_Initial)
 
     fullPath_Beauty::Array{MapTile,1} = reduce(vcat, s.solved_beautyPaths)
@@ -537,18 +553,25 @@ function MPI_Opt1_MasterCore(comm, nranks, rank, host, computedMaze::ComputedMaz
     initialSolve = SolvedMaze(
         s.computedMaze.allTiles,
         s.computedMaze.mapBorders,
-        fullPath_Beauty,
+        fullPath_Initial,
         MapTile[],
-        MapTile[])
-    initialImg = CenAstar.ShowMaze(initialSolve)
+        MapTile[],
+        (s.computedMaze.startTile.x, s.computedMaze.startTile.y),
+        (s.computedMaze.endTile.x, s.computedMaze.endTile.y)
+    )
 
     beautySolve = SolvedMaze(
         s.computedMaze.allTiles,
         s.computedMaze.mapBorders,
         fullPath_Beauty,
         MapTile[],
-        MapTile[])
-    # beautyImg = CenAstar.ShowMaze(beautySolve)
+        MapTile[],
+        (s.computedMaze.startTile.x, s.computedMaze.startTile.y),
+        (s.computedMaze.endTile.x, s.computedMaze.endTile.y)
+    )
+    fig = Figure(; size=(1600, 900))
+    initialImg = CenAstar.ShowMaze(initialSolve, fig, 1)
+    beautyImg = CenAstar.ShowMaze(beautySolve, fig, 2)
     # // ::: -------------------------:: End of Processing the Results ::------------------------- ::: // 
 end
 
@@ -662,6 +685,7 @@ function MPI_OPT1_SendBeautificationJob(s::MasterState, worker)
     For the last worker, it starts at the middle of the previous worker's second path,
     and ends at the end of the own second path
     =#
+
     isOnlyWorker::Bool = worker == 1 && s.nranks == 2
     isFirstWorker::Bool = worker == 1
     isEndWorker::Bool = worker == s.nranks - 1
@@ -1122,7 +1146,6 @@ function MPI_OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, 
             state.postponed = false
         else
             state.currentTile::MapTile, _ = dequeue_pair!(state.frontier)
-            println("ooooooooo Just popped $(state.currentTile), trying to find $(state.endTile)")
         end
 
         if state.currentTile === state.endTile

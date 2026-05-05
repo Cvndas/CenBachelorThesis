@@ -75,7 +75,6 @@ function DrawOutline(axis::Axis, coord::Tuple{Int32,Int32}, color, thickness; te
     asPoly = CreateOutline(coord, thickness)
     poly!(axis, asPoly, color=color)
 
-
     if text != ""
         x = coord[1]
         y = coord[2]
@@ -87,9 +86,9 @@ end
 
 
 function DrawOutlines(axis::Axis, coordinates::Array{Tuple{Int32,Int32}}, color, thickness)
-    outlinesAsPolys::Vector{Tuple{Int32,Int32}} = []
+    outlinesAsPolys::Vector{Polygon} = []
     for coord in coordinates
-        vcat(outlinesAsPolys, CreateOutline(coord, thickness))
+        outlinesAsPolys = vcat(outlinesAsPolys, CreateOutline(coord, thickness))
     end
     poly!(axis, outlinesAsPolys, color=color)
 end
@@ -124,9 +123,9 @@ function SquareAtPoint(axis::Axis, x::Int, y::Int; color=:black, shouldDrawText=
 end
 
 
-function ShowMaze(solvedMaze::SolvedMaze)
-    fig = Figure(; size=(1600, 900))
-    axis = Axis(fig[1, 1])
+function ShowMaze(solvedMaze::SolvedMaze, fig::Figure, horizontalPos::Int)
+    # fig = Figure(; size=(1600, 900))
+    axis = Axis(fig[1, horizontalPos])
 
     # Creating batches for terrain
     dirtPath = MapTile[]
@@ -174,13 +173,17 @@ function ShowMaze(solvedMaze::SolvedMaze)
 
     if !isempty(solvedMaze.shortestPathTiles)
         spTiles = [(tile.x, tile.y) for tile in solvedMaze.shortestPathTiles]
-        DrawSquares(axis, spTiles, PATHCOLOR_Traversed)
+        # DrawSquares(axis, spTiles, PATHCOLOR_Traversed)
+        DrawOutlines(axis, spTiles, PATHCOLOR_Traversed, 0.3)
     end
 
     if !isempty(solvedMaze.wayPoints)
         wayPoints = [(tile.x, tile.y) for tile in solvedMaze.wayPoints]
         DrawSquares(axis, wayPoints, PATHCOLOR_WayPoint)
     end
+
+    DrawOutline(axis, solvedMaze.startPoint, PATHCOLOR_StartPoint, 0.4)
+    DrawOutline(axis, solvedMaze.endPoint, PATHCOLOR_EndPoint, 0.4)
 
     axis.aspect = DataAspect() # Makes the y and x axis scaled equally.
     hidedecorations!(axis) # Removes the x and y axis numbers. 
