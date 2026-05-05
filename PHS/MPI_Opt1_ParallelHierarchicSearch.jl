@@ -296,6 +296,7 @@ end
 
 # A function that took quite a few calories to write
 function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile, allTiles::Array{MapTile,2}, verticalEstimationSize::Int32, horizontalExtensionSize::Int32, maxX::Int32, maxY::Int32, sentMinMax::Array{Union{MinMaxY,Nothing}})::Array{MapTile,1}
+    # TODO: Debugging sesh for this function tomorrow. It's a mess. It's a pain.
     println("~~~Going to get the estimated necessary cells for a path between $wayPointA and $wayPointB")
     # println("~~~Vertical estimation size: $verticalEstimationSize, horizontalExtensionSize: $horizontalExtensionSize")
 
@@ -312,8 +313,13 @@ function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapT
     end
 
     wayPointXDif = rightWayPoint.x - leftWayPoint.x
+
+    # Prevents division by zero when computing slope, if x is equal for left and right
+    if wayPointXDif == 0
+        wayPointXDif = 1
+    end
     slope::Float64 = (rightWayPoint.y - leftWayPoint.y) / wayPointXDif
-    println("~~~Computed a slope of $slope")
+    # println("~~~Computed a slope of $slope")
 
     diagonals = Tuple{Int32,Int32}[]
 
@@ -325,14 +331,26 @@ function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapT
     rightMostX += horizontalExtensionSize
     rightMostX = clamp(rightMostX, Int32(1), maxX)
 
+
     diagonalY::Float64 = Float64(leftWayPoint.y)
-    for x in leftWayPoint.x:-1:leftMostX
+
+    # Guarantee that the waypoints are included in the package
+    push!(diagonals, (leftWayPoint.x, leftWayPoint.y))
+    push!(diagonals, (rightWayPoint.x, rightWayPoint.y))
+
+    for x in leftWayPoint.x-1:-1:leftMostX
         push!(diagonals, (x, round(Int32, diagonalY)))
         diagonalY -= slope
     end
 
     diagonalY = Float64(leftWayPoint.y) + slope
-    for x in leftWayPoint.x+1:rightMostX
+    for x in leftWayPoint.x+1:rightWayPoint.x-1
+        push!(diagonals, (x, round(Int32, diagonalY)))
+        diagonalY += slope
+    end
+
+    diagonalY += slope
+    for x in rightWayPoint.x+1:rightMostX
         push!(diagonals, (x, round(Int32, diagonalY)))
         diagonalY += slope
     end
@@ -349,8 +367,11 @@ function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapT
         if lowest < 1
             lowest = 1
         end
+        if lowest > maxY
+            lowest = maxY
+        end
 
-        highest = diagonal[2] + verticalEstimationSize
+        highest = lowest + verticalEstimationSize
         if highest > maxY
             highest = maxY
         end
@@ -359,27 +380,41 @@ function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapT
 
         if columnMinMax === nothing
             for v in lowest:highest
+                @assert v >= 1 "v was less than 1: $v"
                 push!(coordinates, (diagonal[1], v))
             end
             newColumnMinMax::MinMaxY = MinMaxY(lowest, highest)
             sentMinMax[diagonal[1]] = newColumnMinMax
 
         else # If the sentMinMax did exist for this column, use that to selectively gather tiles to send
+            @assert columnMinMax.minY > 0
+            @assert columnMinMax.maxY > 0
             #=
             These two if checks exist to deal with disjoint ranges. 
             =#
             if highest < columnMinMax.minY
-                println("______Bugfix on HIGHEST, where disjoint ranges lead to incorrect bookkeeping of which tiles were sent")
-                highest = columnMinMax.minY
+                # println("______Bugfix on HIGHEST, where disjoint ranges lead to incorrect bookkeeping of which tiles were sent. minY was $(columnMinMax.minY)")
+                highest = columnMinMax.minY - 1 # - 1 so we don't send a duplicate
+                println("Highest < columnMinMax.minY, so it was set to $highest")
+                @assert highest <= maxY "Highest was greater than maxY: $highest vs $maxY, minY was $(columnMinMax.minY)"
             end
             if lowest > columnMinMax.maxY
-                println("______Bugfix on LOWEST, where disjoint ranges lead to incorrect bookkeeping of which tiles were sent")
-                lowest = columnMinMax.maxY
+                # println("______Bugfix on LOWEST, where disjoint ranges lead to incorrect bookkeeping of which tiles were sent. maxY was $(columnMinMax.maxY)")
+                lowest = columnMinMax.maxY + 1 # + 1 so we don't send a duplicate
+                @assert lowest <= maxY "Lowest was <= maxY ($lowest) after it was originally $(lowest-1)"
             end
 
+            @assert highest >= lowest "highest was smaller than lowest: $highest vs $lowest"
+            @assert lowest > 0 "Somehow lowest became less than 1 here: $lowest"
+            # if lowest < 1
+            #     println("Lowest was $lowest so it was artificially raised to 1")
+            #     lowest = 1
+            # end
 
             for v in lowest:highest
                 if v < columnMinMax.minY || v > columnMinMax.maxY
+                    @assert v >= 1 "v was less than 1: $v. lowest: $lowest, highest: $highest"
+                    @assert v <= maxY "v was less than greater than maxY: $v. lowest: $lowest, highest: $highest"
                     push!(coordinates, (diagonal[1], v))
                     DEBUG_totalConsidered += 1
                 else
@@ -387,6 +422,8 @@ function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapT
                     DEBUG_totalConsidered += 1
                 end
             end
+
+            # Updating the minmax range
             if lowest < columnMinMax.minY
                 columnMinMax.minY = lowest
             end
@@ -403,7 +440,9 @@ function MPI_OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapT
         push!(mapTilePackage, allTiles[coord[1], coord[2]])
     end
     # println("~~~Created the mapTilePackage")
-    println("~~~New Optimization: avoided sending $DEBUG_previouslySentNotAddedCount previously sent tiles. Instead, we sent $(length(mapTilePackage)) tiles, saving $(DEBUG_totalConsidered - length(mapTilePackage)) tiles")
+    if length(mapTilePackage) < DEBUG_totalConsidered
+        println("~~~New Optimization: avoided sending $DEBUG_previouslySentNotAddedCount previously sent tiles. Instead, we sent $(length(mapTilePackage)) tiles, saving $(DEBUG_totalConsidered - length(mapTilePackage)) tiles")
+    end
     # TODO: Log the number of times that map supplements of length 0 are sent.
     # display(mapTilePackage)
 
@@ -886,6 +925,9 @@ function MPI_OPT1_Worker_ReceiveInitialMapDataAndJobs(comm, rank)::WorkerState
     maxX::Int32 = initialJobRequest.maxX
     maxY::Int32 = initialJobRequest.maxY
 
+    # println("The tiles the worker received for the initial job: ")
+    # display(availableTiles)
+
     jobA_startTile = availableTiles[(jobA.wayPointA.x, jobA.wayPointA.y)]
     jobA_endTile = availableTiles[(jobA.wayPointB.x, jobA.wayPointB.y)]
 
@@ -1075,11 +1117,12 @@ function MPI_OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, 
 
     foundEnd = false
 
-    while isempty(state.frontier) == false
+    while isempty(state.frontier) == false || state.postponed
         if state.postponed == true
             state.postponed = false
         else
             state.currentTile::MapTile, _ = dequeue_pair!(state.frontier)
+            println("ooooooooo Just popped $(state.currentTile), trying to find $(state.endTile)")
         end
 
         if state.currentTile === state.endTile
@@ -1106,7 +1149,7 @@ function MPI_OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, 
         end
     end
 
-    @assert foundEnd == true "Didn't find end, but got to the ConstructPath part regardless"
+    @assert foundEnd == true "Didn't find end, but got to the ConstructPath part regardless. Worker had $(length(availableTiles)) tiles to work with"
 
     return ConstructPath(state.endTile, state.startTile, state.cameFrom)
 end

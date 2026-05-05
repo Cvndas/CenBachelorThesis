@@ -530,6 +530,13 @@ function LoadMapToEdit(mapName::String)
     return loaded
 end
 
+function UpdateOldMaps(oldMap::SavedMaze)
+    for mapTile in oldMap.mapTiles
+        if mapTile.costToReach == Int32(20)
+            mapTile.costToReach = PATHCOST_Wall
+        end
+    end
+end
 
 function RunMapBuilder(mapToEdit::String)
     global s
@@ -574,6 +581,7 @@ function RunMapBuilder(mapToEdit::String)
         # Editing an existing map
     else
         loaded::SavedMaze = LoadMapToEdit(mapToEdit)
+        UpdateOldMaps(loaded)
         s = MazeBuildState(loaded.xMax, loaded.yMax, fig, axis, Cursor(1, 1), loaded.mapTiles, loaded.wayPoints, false)
     end
 

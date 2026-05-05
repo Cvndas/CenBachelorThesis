@@ -1,4 +1,4 @@
-const PATHCOST_Wall = 20
+const PATHCOST_Wall = 124
 const PATHCOST_Default = 5
 const PATHCOST_BoostPad = 1
 const PATHCOST_Mud = 7

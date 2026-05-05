@@ -13,12 +13,15 @@ function GenerateCoreAppropriateWaypoints(hardcodedWaypoints::Array{MapTile,1}, 
 
     # Forming straight lines from A to B
     for i in 1:length(hardcodedWaypoints)-1
+        pushFirst::Bool = false
         if hardcodedWaypoints[i].x < hardcodedWaypoints[i+1].x
             leftSide = hardcodedWaypoints[i]
             rightSide = hardcodedWaypoints[i+1]
+            pushFirst = false
         else
             leftSide = hardcodedWaypoints[i+1]
             rightSide = hardcodedWaypoints[i]
+            pushFirst = true
         end
 
         # Forming the straight line between these points
@@ -28,14 +31,22 @@ function GenerateCoreAppropriateWaypoints(hardcodedWaypoints::Array{MapTile,1}, 
         yDifPerX::Float64 = Float64(ydif) / Float64(xdif)
         # println("From waypoint $leftSide to $rightSide, the yDifPerX is $yDifPerX")
 
+        localLine = []
+
         y = leftSide.y
         for x in (leftSide.x):(rightSide.x)
-            push!(straightLine, allTiles[x, y])
+            if pushFirst
+                pushfirst!(localLine, allTiles[x, y])
+            else
+                push!(localLine, allTiles[x, y])
+            end
             y = floor(Int32, Float64(y) + yDifPerX)
         end
+        straightLine = vcat(straightLine, localLine)
         # println("Set up the waypoints for path $i and $(i + 1)")
     end
     println("Formed a straight line with $(length(straightLine)) points")
+    @assert straightLine[end] == hardcodedWaypoints[end] "Straight line end is not hardcoded end. sl: $(straightLine[end]), hc: $(hardcodedWaypoints[end])"
 
     #=
     Splitting up the straight line among all the workers, giving each worker 2 paths AB AB
