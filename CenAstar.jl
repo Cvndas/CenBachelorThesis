@@ -114,13 +114,12 @@ function LoadMap(mapName::String)
 end
 
 
-function ComputeMaze()::ComputedMaze
-    config = include("Config.jl")
+function ComputeMaze(mazeSize_X::Int32, mazeSize_Y::Int32)::ComputedMaze
     println("\n\n--- GENERATING A MAZE --\n")
     xMin::Int32 = 1
-    xMax::Int32 = config.MAZE_SIZE_X
+    xMax::Int32 = mazeSize_X
     yMin::Int32 = 1
-    yMax::Int32 = config.MAZE_SIZE_Y
+    yMax::Int32 = mazeSize_Y
 
     @assert xMin == 1 # Never Change
     @assert yMin == 1 # Never Change
@@ -170,7 +169,7 @@ end
 
 
 
-function InitializeSeed()
+function InitializeSeed()::Int
     config = include("Config.jl")
     seed = config.seed
     # seed = 5
@@ -179,6 +178,7 @@ function InitializeSeed()
     end
     println("Initialized with seed $seed")
     Random.seed!(seed)
+    return seed
 end
 
 

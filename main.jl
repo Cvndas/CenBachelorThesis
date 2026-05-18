@@ -22,6 +22,13 @@ from non-work packages being sent over MPI.
 
 =#
 
+# TODO: Functionality to run the entire benchmark for each map and core config
+# x times in a row, and discarding the result of the first run, then storing
+# the average, the lowest, the fastest, etc, and using the averages to compare
+# to the single threaded and other configurations of MPI
+
+# TODO: Only when this warmup stuff is implemented, check the benchmarks 
+# for suspicious values, to sniff out any potential benchmarking bugs
 
 function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
     Clear()
@@ -36,19 +43,22 @@ function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
         comm = MPI.Comm_dup(MPI.COMM_WORLD)
         nranks = MPI.Comm_size(comm)
         rank = MPI.Comm_rank(comm)
-        host = MPI.Get_processor_name()
-        println("Hello from $host, I am process $rank of $nranks processes!")
-        # CenAstar.MPI_Naive_PhsEntry(comm, nranks, rank, host)
-        CenAstar.MPI_Opt1_Entry(comm, nranks, rank, host, true)
-        # CenAstar.SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
+        masterCore = 0
+        processorName = MPI.Get_processor_name()
+        # println("Hello from $processorName, I am process $rank of $nranks processes!")
+
+        CenAstar.MPI_Opt1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, false)
+
         MPI.Finalize()
     end
 
-    run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
-    run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
+    # Here, specify what to run
+    # run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
+    # run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
+    # run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
     run(`$(mpiexec()) -np 8 julia --project=. -e $code`)
-    run(`$(mpiexec()) -np 16 julia --project=. -e $code`)
-    run(`$(mpiexec()) -np 32 julia --project=. -e $code`)
+    # run(`$(mpiexec()) -np 16 julia --project=. -e $code`)
+    # run(`$(mpiexec()) -np 32 julia --project=. -e $code`)
 end
 
 
@@ -67,10 +77,11 @@ function main_MPI_ParallelHierarchicSearch_HandcraftedMaps()
         comm = MPI.Comm_dup(MPI.COMM_WORLD)
         nranks = MPI.Comm_size(comm)
         rank = MPI.Comm_rank(comm)
-        host = MPI.Get_processor_name()
-        println("Hello from $host, I am process $rank of $nranks processes!")
+        processorName = MPI.Get_processor_name()
+        masterCore = 0
+        println("Hello from $processorName, I am process $rank of $nranks processes!")
         # CenAstar.MPI_Naive_PhsEntry(comm, nranks, rank, host)
-        CenAstar.MPI_Opt1_Entry(comm, nranks, rank, host, true)
+        CenAstar.MPI_Opt1_Entry(comm, nranks, rank, masterCore, true)
         # CenAstar.SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
         MPI.Finalize()
     end
