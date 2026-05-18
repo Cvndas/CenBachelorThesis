@@ -47,7 +47,7 @@ function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
         processorName = MPI.Get_processor_name()
         # println("Hello from $processorName, I am process $rank of $nranks processes!")
 
-        CenAstar.MPI_Opt1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, false)
+        CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, false)
 
         MPI.Finalize()
     end
@@ -81,7 +81,7 @@ function main_MPI_ParallelHierarchicSearch_HandcraftedMaps()
         masterCore = 0
         println("Hello from $processorName, I am process $rank of $nranks processes!")
         # CenAstar.MPI_Naive_PhsEntry(comm, nranks, rank, host)
-        CenAstar.MPI_Opt1_Entry(comm, nranks, rank, masterCore, true)
+        CenAstar.OPT1_Entry(comm, nranks, rank, masterCore, true)
         # CenAstar.SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
         MPI.Finalize()
     end
@@ -112,7 +112,7 @@ function main_MPI_ParallelHierarchicSearch()
         host = MPI.Get_processor_name()
         println("Hello from $host, I am process $rank of $nranks processes!")
         # CenAstar.MPI_Naive_PhsEntry(comm, nranks, rank, host)
-        CenAstar.MPI_Opt1_Entry(comm, nranks, rank, host, false)
+        CenAstar.OPT1_Entry(comm, nranks, rank, host, false)
         # CenAstar.SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
         MPI.Finalize()
     end

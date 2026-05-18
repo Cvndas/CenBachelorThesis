@@ -10,21 +10,21 @@ end
 
 
 
-mutable struct BenchmarkData_WorkerCore
+mutable struct mBenchmarkData_WorkerCore
     workerId::Int # WorkerId is workerRank - 1
-    numberOfOccasionsMapDataWasNotAvailableAndIHadToWait::Int #TODO
+    numberOfOccasionsMapDataWasNotAvailableAndIHadToWait::Int
 
     totalMapTilesCollected::Int #TODO
     tilesExplored::Int #TODO
 
-    secondsSpentWaitingForMapDataToComeIn::Float64 #TODO
+    secondsSpentWaitingForMapDataToComeIn::Float64
     secondsFromReceivingJobToHavingSentBeautifiedPaths::Float64 #TODO
 
     secondsWaitingForInitialJobAndMapDataToComeIn::Float64 #TODO
     numberOfTimesNewMapDataWasRequested::Int #TODO
 
 
-    function BenchmarkData_WorkerCore(workerRank::Int)::BenchmarkData_WorkerCore
+    function mBenchmarkData_WorkerCore(workerRank::Int)::mBenchmarkData_WorkerCore
         new(
             workerRank, # Worker id
             0, # Number of occasions map data was not available and we had to wait
@@ -41,7 +41,7 @@ mutable struct BenchmarkData_WorkerCore
     end
 
     # This is an empty constructor, intended as a buffer for the master to receive the incoming data over MPI
-    function BenchmarkData_WorkerCore()::BenchmarkData_WorkerCore
+    function mBenchmarkData_WorkerCore()::mBenchmarkData_WorkerCore
         new(
             -77,
             #
@@ -58,9 +58,9 @@ mutable struct BenchmarkData_WorkerCore
 end
 
 
-function BenchmarkData_WorkerCore_MakeMPICompatbible(mutableVer::BenchmarkData_WorkerCore)::MpiCompatible_BenchmarkData_WorkerCore
-    m::BenchmarkData_WorkerCore = mutableVer
-    return MpiCompatible_BenchmarkData_WorkerCore(
+function mBenchmarkData_WorkerCore_MakeMPICompatbible(mutableVer::mBenchmarkData_WorkerCore)::BenchmarkData_WorkerCore
+    m::mBenchmarkData_WorkerCore = mutableVer
+    return BenchmarkData_WorkerCore(
         m.workerId,
         m.numberOfOccasionsMapDataWasNotAvailableAndIHadToWait,
         m.totalMapTilesCollected,
@@ -73,7 +73,7 @@ function BenchmarkData_WorkerCore_MakeMPICompatbible(mutableVer::BenchmarkData_W
 end
 
 
-struct MpiCompatible_BenchmarkData_WorkerCore
+struct BenchmarkData_WorkerCore
     workerId::Int # WorkerId is workerRank - 1
     numberOfOccasionsMapDataWasNotAvailableAndIHadToWait::Int #TODO
 
@@ -173,9 +173,29 @@ function SaveReport(report::String, path::String)
 end
 
 
-function OPT1_AverageBenchmarkData(datas::Vector{BenchmarkData_MasterCore})
+# function OPT1_WorstWorkerBenchmarkData(datas::Vector{BenchmarkData_WorkerCore})
+#     if length(datas) == 1
+#         return datas[1]
+#     end
+#     worstBenchmark = mBenchmarkData_WorkerCore(-99)
+
+#     error("Unfinished func")
+# end
+
+# function OPT1_AverageWorkerBenchmarkData(datas::Vector{BenchmarkData_WorkerCore})::BenchmarkData_WorkerCore
+#     if length(datas) == 1
+#         return datas[1]
+#     end
+
+#     averageBenchmark = mBenchmarkData_WorkerCore(-99)
+
+#     error("Unfinished func")
+# end
+
+
+function OPT1_AverageMasterBenchmarkData(datas::Vector{BenchmarkData_MasterCore})
     if length(datas) == 0
-        error("Tried to average a benchmark vector of 0 elements")
+        error("Tried to average a master benchmark vector of 0 elements")
     end
     if length(datas) == 1
         return datas[1]
@@ -201,7 +221,7 @@ end
 
 
 # the \ skips cancels a newline in the string
-function OPT1_GenerateWorkerReport(workerData::BenchmarkData_WorkerCore)::String
+function OPT1_GenerateWorkerReport(workerData::mBenchmarkData_WorkerCore)::String
     report::String = "
         +++WORKER REPORT FOR WORKER $(workerData.workerId)+++
 
@@ -212,9 +232,30 @@ function OPT1_GenerateWorkerReport(workerData::BenchmarkData_WorkerCore)::String
 end
 
 
-function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, workerData::Vector{MpiCompatible_BenchmarkData_WorkerCore})::String
+function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, workerDatas::Vector{BenchmarkData_WorkerCore})::String
+    # TODO: Along with the string, return a struct that has the comprehensive data, so that the comprehensive data can be averaged,
+    # including the worker data of multiple runs. Everything I print here, also store it in a struct.
+    # Basically, make a maze solve return exactly one benchmark report, which also contains information
+    # about the workers.
     m::BenchmarkData_MasterCore = masterData
     equivalentWidthHeight::Int = Int(sqrt(m.totalMapSize))
+
+    all_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait = [(w.numberOfOccasionsMapDataWasNotAvailableAndIHadToWait, w.workerId) for w in workerDatas]
+    worst_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait = maximum(all_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait)
+    best_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait = minimum(all_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait)
+    average_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait = mean(t[1] for t in all_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait)
+
+    all_numberOfTimesNewMapDataWasRequested = [(w.numberOfTimesNewMapDataWasRequested, w.workerId) for w in workerDatas]
+    worst_numberOfTimesNewMapDataWasRequested = maximum(all_numberOfTimesNewMapDataWasRequested)
+    best_numberOfTimesNewMapDataWasRequested = minimum(all_numberOfTimesNewMapDataWasRequested)
+    average_numberOfTimesNewMapDataWasRequested = mean(t[1] for t in all_numberOfTimesNewMapDataWasRequested)
+
+    all_secondsSpentWaitingForMapDataToComeIn = [(w.secondsSpentWaitingForMapDataToComeIn, w.workerId) for w in workerDatas]
+    worst_secondsSpentWaitingForMapDataToComeIn = maximum(all_secondsSpentWaitingForMapDataToComeIn)
+    best_secondsSpentWaitingForMapDataToComeIn = minimum(all_secondsSpentWaitingForMapDataToComeIn)
+    average_secondsSpentWaitingForMapDataToComeIn = mean(t[1] for t in all_secondsSpentWaitingForMapDataToComeIn)
+
+
     report::String = "
         +++MASTER REPORT FOR [$(masterData.mapName)] WITH $(masterData.workerCount) WORKERS+++
 
@@ -229,6 +270,21 @@ function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, work
         First worker to complete the second initial path: $(m.firstWorkerIdToCompleteSecondInitialPath)
         Last worker to complete the second initial path: $(m.lastWorkerIdToCompleteSecondInitialPath)
 
+        | Occasions having to wait for for new map data to come in
+        Unlucky Worker $(worst_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait[2]) had to wait $(worst_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait[1]) times when data was not available after request
+        Lucky worker $(best_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait[2]) had to wait $(best_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait[1]) times when data was not available after request
+        On average a worker had to wait $(average_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait) times when data was not available after request
+
+        | Seconds spent idle waiting for map data to come in
+        Unlucky Worker $(worst_secondsSpentWaitingForMapDataToComeIn[2]) had to wait $(worst_secondsSpentWaitingForMapDataToComeIn[1]) seconds for map data to come in
+        Lucky Worker $(best_secondsSpentWaitingForMapDataToComeIn[2]) had to wait $(best_secondsSpentWaitingForMapDataToComeIn[1]) seconds for map data to come in
+        On average a worker had to wait for ($average_secondsSpentWaitingForMapDataToComeIn) seconds for map data to come in
+
+        | Occasions that new map data was requested
+        Unlucky worker $(worst_numberOfTimesNewMapDataWasRequested[2]) had to request new map data $(worst_numberOfTimesNewMapDataWasRequested[1]) times
+        Lucky worker $(best_numberOfTimesNewMapDataWasRequested[2]) had to request new map data $(best_numberOfTimesNewMapDataWasRequested[1]) times
+        On average a worker had to request new map data $(average_numberOfTimesNewMapDataWasRequested) times
+
         | Hyperparameter Configuration
         Initial map delivery size: $(m.initialMapDeliverySize)
         Number of times a map supplement was requested: $(m.timesAMapSupplementWasRequested)
@@ -242,6 +298,8 @@ function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, work
         Seconds from start to having received all Initial Paths: $(m.secondsFromStartToHavingReceivedAllInitialPaths)
         Seconds from start to having received all Beautified Paths: $(m.secondsFromStartToHavingReceivedAllBeautifiedPaths)
         Seconds between having received all Initial Paths and all Beautified Paths: $(m.secondsFromStartToHavingReceivedAllBeautifiedPaths - m.secondsFromStartToHavingReceivedAllInitialPaths)
+
+
     "
     return report
 end
