@@ -205,6 +205,8 @@ mutable struct MasterState
 
     initialWayPoints::Array{MapTile}
     beautifiedWayPoints::Array{MapTile}
+
+    benchmarkData_Master::BenchmarkData_MasterCore
 end
 
 
@@ -247,6 +249,7 @@ function MPI_OPT1_TryLevelUp(allEntries::Array{MPI_Opt1_WorkerEntry})
 
     return maxLevel
 end
+
 
 
 function MPI_OPT1_WorkerCompletedInitialJob(workerEntry::MPI_Opt1_WorkerEntry)
@@ -570,9 +573,27 @@ function MPI_Opt1_MasterCore(comm, nranks, rank, host, computedMaze::ComputedMaz
         (s.computedMaze.endTile.x, s.computedMaze.endTile.y)
     )
     fig = Figure(; size=(1600, 900))
-    initialImg = CenAstar.ShowMaze(initialSolve, fig, 1)
+    # initialImg = CenAstar.ShowMaze(initialSolve, fig, 1)
     beautyImg = CenAstar.ShowMaze(beautySolve, fig, 2)
     # // ::: -------------------------:: End of Processing the Results ::------------------------- ::: // 
+
+    MPI_OPT1_Master_BenchmarkingPhase(s.benchmarkData_Master)
+end
+
+
+
+
+
+function MPI_OPT1_Master_BenchmarkingPhase(benchmarkData_Master::BenchmarkData_MasterCore)
+    # TODO: Send out the benchmark data requests to all the workers.
+    workerBenchmarkDatas = Vector{BenchmarkData_WorkerCore}()
+
+    report::String = GenerateBenchmarkReport_OPT1(benchmarkData_Master, workerBenchmarkDatas)
+    println("Here's the performance report: $(report)")
+
+    imaginaryWorkerBenchmarkData = BenchmarkData_WorkerCore(99)
+    imaginaryWorkerReport::String = GenerateWorkerReport_OPT1(imaginaryWorkerBenchmarkData)
+    println("Here's a benchmark report for an imaginary worker: $(imaginaryWorkerReport)")
 end
 
 
@@ -615,6 +636,10 @@ function MPI_OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::Comput
     end
     println("+++ +++ +++\n")
 
+    benchmarkData_Master = BenchmarkData_MasterCore(
+        nranks - 1
+    )
+
     s::MasterState = MasterState(
         comm,
         computedMaze,
@@ -631,7 +656,8 @@ function MPI_OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::Comput
         Array{MapTile,1}[], # solved initial paths
         Array{MapTile,1}[], # solved beauty paths
         initialWayPoints,
-        MapTile[] # beautified waypoints
+        MapTile[], # beautified waypoints
+        benchmarkData_Master
     )
     return s
 end
@@ -926,7 +952,7 @@ function MPI_OPT1_Worker_ReceiveInitialMapDataAndJobs(comm, rank)::WorkerState
 
     initialMapDataDelivery_Status = MPI.Probe(comm, MPI.Status, source=0, tag=MPI_OPT1_MAP_INITIAL_DELIVERY)
     mapDataCount = MPI.Get_count(initialMapDataDelivery_Status, MapTile)
-    println("Worker $rank has received a probe signal for the initial map delivery\nThe mapdata will have $mapDataCount elements")
+    println("Worker $rank has received a probe signal for the initial map delivery\nThe mapdata will have $(mapDataCount) elements")
 
     initialMapDataDelivery = Array{MapTile,1}(undef, mapDataCount)
 

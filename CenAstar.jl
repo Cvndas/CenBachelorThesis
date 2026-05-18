@@ -19,7 +19,7 @@ include("VariousStructs.jl")
 
 using Serialization
 include("Utilities.jl")
-
+include("Benchmarking.jl")
 
 
 include("MazeGenerator.jl")

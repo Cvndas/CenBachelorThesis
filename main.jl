@@ -10,6 +10,47 @@ function Clear()
     print("\33[2J\33[H")
 end
 
+#=
+TODO: 
+For the benchmarking in the OPT1 file, when a worker has sent its beautification path, 
+it needs to wait for a signal from the master to send a benchmarking data package.
+
+Important that these benchmarking packages are only being sent over to the master when 
+the actual work is fully complete, so there's no network congestion or other overhead
+from non-work packages being sent over MPI.
+
+
+=#
+
+
+function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
+    Clear()
+    println("Starting the Benchmarking Run A")
+
+    code = quote
+        using MPI
+        include("CenAstar.jl")
+        using .CenAstar
+
+        MPI.Init()
+        comm = MPI.Comm_dup(MPI.COMM_WORLD)
+        nranks = MPI.Comm_size(comm)
+        rank = MPI.Comm_rank(comm)
+        host = MPI.Get_processor_name()
+        println("Hello from $host, I am process $rank of $nranks processes!")
+        # CenAstar.MPI_Naive_PhsEntry(comm, nranks, rank, host)
+        CenAstar.MPI_Opt1_Entry(comm, nranks, rank, host, true)
+        # CenAstar.SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
+        MPI.Finalize()
+    end
+
+    run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 8 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 16 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 32 julia --project=. -e $code`)
+end
+
 
 #= run in the julia repl with
 include("main.jl"); main_MPI_ParallelHierarchicSearch_HandcraftedMaps();
@@ -37,9 +78,9 @@ function main_MPI_ParallelHierarchicSearch_HandcraftedMaps()
     # run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
     # run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
     # run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
-
-
 end
+
+
 
 
 #= run in the julia repl with
