@@ -492,7 +492,7 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore)
 
     reportStructs::Vector{OPT1_BenchmarkingReportStruct} = Vector{OPT1_BenchmarkingReportStruct}()
 
-    iterations::Int = 20
+    iterations::Int = 3
     for i in 1:iterations+1
 
         # Discarding the result of the first run, due to warmup
@@ -508,6 +508,8 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore)
         end
     end
     if rank == 0
+        # TODO: Run the single threaded A*, put its info into the report struct too.
+
         println("The AVERAGE report:")
         averageReport = OPT1_AverageBenchmarkingReportStructs(reportStructs)
         println(OPT1_GenerateReportString(averageReport))
@@ -1125,7 +1127,9 @@ end
 function OPT1_Worker_CompleteBeautyJob(w::WorkerState)
     beautyJobSolved::Bool = false
     while beautyJobSolved == false
+        T_beforeComputation = time()
         jobSolveResult = OPT1_CustomAStar(w.availableTiles, w.maxX, w.maxY, w.beautyJobState)
+        w.benchmarkData_Worker.rawComputationSeconds_Beautify += time() - T_beforeComputation
         if jobSolveResult === nothing
             # Request for more data to come in, and wait for it
             w.benchmarkData_Worker.numberOfTimesNewMapDataWasRequested += 1
@@ -1152,7 +1156,9 @@ function OPT1_Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobBComp
             if w.jobAState.postponed
                 OPT1_Worker_ReceiveAndProcessMapRequest!(w)
             end
+            T_beforeComputation = time()
             jobA_solveResult = OPT1_CustomAStar(w.availableTiles, w.maxX, w.maxY, w.jobAState)
+            w.benchmarkData_Worker.rawComputationSeconds_Initial += time() - T_beforeComputation
             if jobA_solveResult === nothing
                 w.benchmarkData_Worker.numberOfTimesNewMapDataWasRequested += 1
                 OPT1_Worker_SendMapRequest(w.jobAState, true, w.comm, w)
@@ -1171,7 +1177,9 @@ function OPT1_Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobBComp
             if w.jobBState.postponed
                 OPT1_Worker_ReceiveAndProcessMapRequest!(w)
             end
+            T_beforeComputation = time()
             jobB_solveResult = OPT1_CustomAStar(w.availableTiles, w.maxX, w.maxY, w.jobBState)
+            w.benchmarkData_Worker.rawComputationSeconds_Initial += time() - T_beforeComputation
             if jobB_solveResult === nothing
                 w.benchmarkData_Worker.numberOfTimesNewMapDataWasRequested += 1
                 OPT1_Worker_SendMapRequest(w.jobBState, false, w.comm, w)
