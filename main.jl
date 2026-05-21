@@ -53,12 +53,22 @@ function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
     end
 
     # Here, specify what to run
-    # run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
-    # run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
-    # run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
     run(`$(mpiexec()) -np 8 julia --project=. -e $code`)
-    # run(`$(mpiexec()) -np 16 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 16 julia --project=. -e $code`)
     # run(`$(mpiexec()) -np 32 julia --project=. -e $code`)
+end
+
+
+#= run in the julia repl with
+include("main.jl"); main_MPI_ParallelHierarchicSearch_ProduceBenchmarkGraphs_RunA();
+=#
+function main_MPI_ParallelHierarchicSearch_ProduceBenchmarkGraphs_RunA()
+
+    runAFolder = joinpath("Benchmarks", "RunA")
+    CenAstar.OPT1_ProduceBenchmarkGraphs(runAFolder)
 end
 
 

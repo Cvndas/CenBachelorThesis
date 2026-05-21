@@ -35,8 +35,6 @@ end
 
 
 function st_AStar(startTile::MapTile, endTile::MapTile, allTiles::Array{MapTile,2})::Array{MapTile}
-    println("Starting the AStar pathfinding")
-
     @assert allTiles[endTile.x, endTile.y] !== nothing "End tile wasn't in the allTiles matrix. Max x was $(size(allTiles, 1)) and max y was $(size(allTiles, 1))"
 
     xMax = size(allTiles, 1)
@@ -74,9 +72,7 @@ function st_AStar(startTile::MapTile, endTile::MapTile, allTiles::Array{MapTile,
             end
         end
     end
-    println("Done the full pathfinding. Constructing the path now.")
     return ConstructPath(endTile, startTile, cameFrom)
-
 end
 
 

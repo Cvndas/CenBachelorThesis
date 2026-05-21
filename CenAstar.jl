@@ -35,6 +35,7 @@ include("PHS/ST_ParallelHierarchicSearch.jl")
 include("MapBuilder/MapBuilder.jl")
 
 export LoadMap
+export OPT1_ProduceBenchmarkGraphs
 
 #=
 This is a module file. Its purpose is to include the other files that make up CenAstar

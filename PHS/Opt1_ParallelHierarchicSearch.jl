@@ -492,7 +492,9 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore)
 
     reportStructs::Vector{OPT1_BenchmarkingReportStruct} = Vector{OPT1_BenchmarkingReportStruct}()
 
-    iterations::Int = 3
+    config = include("Config.jl")
+    iterations = config.AVERAGING_ITERATIONS
+
     for i in 1:iterations+1
 
         # Discarding the result of the first run, due to warmup
@@ -513,6 +515,16 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore)
         println("The AVERAGE report:")
         averageReport = OPT1_AverageBenchmarkingReportStructs(reportStructs)
         println(OPT1_GenerateReportString(averageReport))
+
+        fileName = OPT1_GenerateReportFilename(averageReport)
+
+        path = joinpath("Benchmarks", "RunA")
+        mkpath(path)
+
+        filePath = joinpath(path, fileName)
+        open(filePath, "w") do file
+            serialize(file, averageReport)
+        end
     end
 
 end
@@ -655,7 +667,13 @@ function OPT1_MasterCore(comm, nranks, rank, masterCore, computedMaze::ComputedM
     s.benchmarkData_Master.secondsFromStartToHavingReceivedAllBeautifiedPaths = T_startToBeautified
     s.benchmarkData_Master.finalLevel = s.currentLevel
     s.benchmarkData_Master.finalSize = s.horizontalExtensionSize * s.verticalEstimationSize
-    reportStruct::OPT1_BenchmarkingReportStruct = OPT1_GenerateBenchmarkReport(s.benchmarkData_Master, workerBenchmarkDatas)
+
+    # TODO: Move this out somewhere, so the same code isn't run 5 times
+    stSeconds = @elapsed stSolution = st_AStar(s.computedMaze.startTile, s.computedMaze.endTile, s.computedMaze.allTiles)
+    stCost = ComputePathCost(stSolution)
+
+    reportStruct::OPT1_BenchmarkingReportStruct = OPT1_GenerateBenchmarkReport(s.benchmarkData_Master, workerBenchmarkDatas, stCost, stSeconds)
+
     return reportStruct
 end
 
