@@ -1,6 +1,27 @@
 using MPI
 # include("OPT1_WorkerEntry.jl")
 
+
+# Before the following todos, complete the current OPT1 benchmarking.
+
+#= TODO: Opt2
+
+Destroy the dependency to previous workers in the beautification phase. Instead of beautifying with
+the previous worker's last path, beautify with the start of the first local worker path, and the end of the 
+last local worker path. This way, the number of paths to be solved locally can be turned into a variable
+
+=#
+
+#= TODO: Opt1 & Opt2
+
+Have the master core passively send more mapdata to users, so that by the time that workers request for more,
+there is probably already some map data available. Just need to do a quick iprobe after every work iteration, even if 
+more data was not requested. On the master side, if there's no request coming in, send more data as soon as
+any worker requests more. If the level increases, send everyone more data. This might be complicated to implement.
+
+=#
+
+
 #=
 The first attempt at creating an optimized MPI Parallel Hierarchic Search (Opt1). What this one does:
 
@@ -210,6 +231,7 @@ mutable struct MasterState
     beautifiedWayPoints::Array{MapTile}
 
     benchmarkData_Master::BenchmarkData_MasterCore
+    iSendRequests
 end
 
 
@@ -227,6 +249,9 @@ mutable struct WorkerState
 
     beautyJobState::Union{WorkerPathfindingState,Nothing}
     benchmarkData_Worker::mBenchmarkData_WorkerCore
+
+    # This holds iSend requests, so they aren't garbage collected until the full operation is done
+    iSendRequests::Vector{MPI.Request}
 end
 
 
@@ -287,7 +312,7 @@ function DeduplicateFinalPath(inputPath::Array{MapTile,1})
             dupes += 1
         end
     end
-    println("THERE WERE $dupes DUPLICATES IN THE PATH")
+    # println("THERE WERE $dupes DUPLICATES IN THE PATH")
 
     return inputPath
 end
@@ -317,10 +342,6 @@ end
 
 # A function that took quite a few calories to write
 function OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile, allTiles::Array{MapTile,2}, verticalEstimationSize::Int32, horizontalExtensionSize::Int32, maxX::Int32, maxY::Int32, sentMinMax::Array{Union{MinMaxY,Nothing}})::Array{MapTile,1}
-    # TODO: Debugging sesh for this function tomorrow. It's a mess. It's a pain.
-    println("~~~Going to get the estimated necessary cells for a path between $wayPointA and $wayPointB")
-    # println("~~~Vertical estimation size: $verticalEstimationSize, horizontalExtensionSize: $horizontalExtensionSize")
-
     DEBUG_previouslySentNotAddedCount::Int = 0
     DEBUG_totalConsidered::Int = 0
 
@@ -340,7 +361,6 @@ function OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile,
         wayPointXDif = 1
     end
     slope::Float64 = (rightWayPoint.y - leftWayPoint.y) / wayPointXDif
-    # println("~~~Computed a slope of $slope")
 
     diagonals = Tuple{Int32,Int32}[]
 
@@ -376,8 +396,6 @@ function OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile,
         diagonalY += slope
     end
 
-    # println("~~~The diagonals: ")
-    # display(diagonals)
 
     coordinates::Array{Tuple{Int32,Int32},1} = Tuple{Int32,Int32}[]
 
@@ -414,23 +432,16 @@ function OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile,
             These two if checks exist to deal with disjoint ranges. 
             =#
             if highest < columnMinMax.minY
-                # println("______Bugfix on HIGHEST, where disjoint ranges lead to incorrect bookkeeping of which tiles were sent. minY was $(columnMinMax.minY)")
                 highest = columnMinMax.minY - 1 # - 1 so we don't send a duplicate
-                println("Highest < columnMinMax.minY, so it was set to $highest")
                 @assert highest <= maxY "Highest was greater than maxY: $highest vs $maxY, minY was $(columnMinMax.minY)"
             end
             if lowest > columnMinMax.maxY
-                # println("______Bugfix on LOWEST, where disjoint ranges lead to incorrect bookkeeping of which tiles were sent. maxY was $(columnMinMax.maxY)")
                 lowest = columnMinMax.maxY + 1 # + 1 so we don't send a duplicate
                 @assert lowest <= maxY "Lowest was <= maxY ($lowest) after it was originally $(lowest-1)"
             end
 
             @assert highest >= lowest "highest was smaller than lowest: $highest vs $lowest"
             @assert lowest > 0 "Somehow lowest became less than 1 here: $lowest"
-            # if lowest < 1
-            #     println("Lowest was $lowest so it was artificially raised to 1")
-            #     lowest = 1
-            # end
 
             for v in lowest:highest
                 if v < columnMinMax.minY || v > columnMinMax.maxY
@@ -453,19 +464,10 @@ function OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile,
             end
         end
     end
-    # println("~~~The coordinates that were grabbed based on the diagonals:")
-    # display(coordinates)
-
     mapTilePackage::Array{MapTile,1} = MapTile[]
     for coord in coordinates
         push!(mapTilePackage, allTiles[coord[1], coord[2]])
     end
-    # println("~~~Created the mapTilePackage")
-    if length(mapTilePackage) < DEBUG_totalConsidered
-        println("~~~New Optimization: avoided sending $DEBUG_previouslySentNotAddedCount previously sent tiles. Instead, we sent $(length(mapTilePackage)) tiles, saving $(DEBUG_totalConsidered - length(mapTilePackage)) tiles")
-    end
-    # TODO: Log the number of times that map supplements of length 0 are sent.
-    # display(mapTilePackage)
 
     return mapTilePackage
 end
@@ -478,15 +480,39 @@ end
 
 
 
-function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, handcraftedTestMap::Bool)
-    # TODO: When benchmarking is set up, implement this function's actual body
+function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore)
     worker::String = if nranks == 2
         "worker"
     else
         "workers"
     end
-    println("Running BenchmarkingRun A with $(nranks-1) $(worker)")
-    OPT1_Entry(comm, nranks, rank, masterCore, handcraftedTestMap)
+    if rank == 0
+        println("Running BenchmarkingRun A with $(nranks-1) $(worker)")
+    end
+
+    reportStructs::Vector{OPT1_BenchmarkingReportStruct} = Vector{OPT1_BenchmarkingReportStruct}()
+
+    iterations::Int = 20
+    for i in 1:iterations+1
+
+        # Discarding the result of the first run, due to warmup
+        if i == 1
+            continue
+        end
+
+        if rank == 0
+            reportStruct::OPT1_BenchmarkingReportStruct = OPT1_Entry(comm, nranks, rank, masterCore, false)
+            push!(reportStructs, reportStruct)
+        else
+            OPT1_Entry(comm, nranks, rank, masterCore, false)
+        end
+    end
+    if rank == 0
+        println("The AVERAGE report:")
+        averageReport = OPT1_AverageBenchmarkingReportStructs(reportStructs)
+        println(OPT1_GenerateReportString(averageReport))
+    end
+
 end
 
 
@@ -500,7 +526,6 @@ end
 function OPT1_Entry(comm, nranks, rank, masterCore, handcraftedTestMap::Bool)
     config = include("Config.jl")
     if rank == masterCore
-        println("Entered OPT1_PhsEntry")
         seed::Int = CenAstar.InitializeSeed()
         mapName::String = ""
         if handcraftedTestMap == true
@@ -517,23 +542,20 @@ function OPT1_Entry(comm, nranks, rank, masterCore, handcraftedTestMap::Bool)
     end
 
     MPI.Barrier(comm)
-    if rank == masterCore
-        println("Master core generated the maze. Starting the PHS Procedure")
-    end
 
     if rank == masterCore
-        OPT1_MasterCore(comm, nranks, rank, masterCore, computedMaze, mapName)
+        reportStruct::OPT1_BenchmarkingReportStruct = OPT1_MasterCore(comm, nranks, rank, masterCore, computedMaze, mapName)
     else
         OPT1_WorkerCore(comm, nranks, rank, masterCore)
     end
 
     MPI.Barrier(comm)
     if rank == masterCore
-        println("All cores are done with the PHS Procedure.")
-        println("Press enter to exit")
-        readline()
-        # fig = Figure()
-        println("Done with main().")
+        # println("Press enter to exit")
+        # readline()
+        # # fig = Figure()
+        # println("Done with main().")
+        return reportStruct
     end
 end
 
@@ -554,7 +576,6 @@ function OPT1_MasterCore(comm, nranks, rank, masterCore, computedMaze::ComputedM
             status = MPI.Probe(comm, MPI.Status; source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG)
             source = MPI.Get_source(status)
             tag = MPI.Get_tag(status)
-            println("Master probed an incoming message from rank $source")
             # // ::: -------------------------:: Handling a Map supply request ::------------------------- ::: // 
             if tag == OPT1_MAP_REQUEST
                 OPT1_Master_HandleMapRequest(s, status, source, tag)
@@ -576,20 +597,14 @@ function OPT1_MasterCore(comm, nranks, rank, masterCore, computedMaze::ComputedM
         end
 
         # // ::: -------------------------:: Processing the Results ::------------------------- ::: // 
-        println("All worker paths are received")
-        println("\n\n--- THE RESULTS ---\n")
-        println("The results were reached with a final level of $(s.currentLevel)")
         fullPath_Initial::Array{MapTile,1} = reduce(vcat, s.solved_initialPaths)
         fullPath_Initial = DeduplicateFinalPath(fullPath_Initial)
-        s.benchmarkData_Master.initialPathCost = ComputePathCost(fullPath_Initial)
-
         fullPath_Beauty::Array{MapTile,1} = reduce(vcat, s.solved_beautyPaths)
-        s.benchmarkData_Master.beautifiedPathCost = ComputePathCost(fullPath_Beauty)
-
-        println("Reconstructed the initial full path, which has cost $(s.benchmarkData_Master.initialPathCost)")
-        println("Reconstructed the beautified full path, which has cost $(s.benchmarkData_Master.beautifiedPathCost)")
+        fullPath_Beauty = DeduplicateFinalPath(fullPath_Beauty)
     end # T_startToBeautified
 
+    s.benchmarkData_Master.initialPathCost = ComputePathCost(fullPath_Initial)
+    s.benchmarkData_Master.beautifiedPathCost = ComputePathCost(fullPath_Beauty)
 
     initialSolve = SolvedMaze(
         s.computedMaze.allTiles,
@@ -614,6 +629,10 @@ function OPT1_MasterCore(comm, nranks, rank, masterCore, computedMaze::ComputedM
     # initialImg = CenAstar.ShowMaze(initialSolve, fig, 1)
     # beautyImg = CenAstar.ShowMaze(beautySolve, fig, 2)
 
+    for iSendRequest::MPI.Request in s.iSendRequests
+        MPI.Wait(iSendRequest)
+    end
+
     # // ::: -------------------------:: End of Processing the Results ::------------------------- ::: // 
     for workerRank in 1:nranks-1
         benchmarkRequest = Int64(64)
@@ -631,18 +650,11 @@ function OPT1_MasterCore(comm, nranks, rank, masterCore, computedMaze::ComputedM
         push!(workerBenchmarkDatas, workerBenchmarkingEntry)
     end
 
-    for workerBenchmarkData::BenchmarkData_WorkerCore in workerBenchmarkDatas
-        println("Received the benchmark data from worker $(workerBenchmarkData.workerId)")
-    end
-
     s.benchmarkData_Master.secondsFromStartToHavingReceivedAllBeautifiedPaths = T_startToBeautified
-
-    report::String = OPT1_GenerateBenchmarkReport(s.benchmarkData_Master, workerBenchmarkDatas)
-    println("$(report)")
-
-    imaginaryWorkerBenchmarkData = mBenchmarkData_WorkerCore(99)
-    imaginaryWorkerReport::String = OPT1_GenerateWorkerReport(imaginaryWorkerBenchmarkData)
-    println("Here's a benchmark report for an imaginary worker: $(imaginaryWorkerReport)")
+    s.benchmarkData_Master.finalLevel = s.currentLevel
+    s.benchmarkData_Master.finalSize = s.horizontalExtensionSize * s.verticalEstimationSize
+    reportStruct::OPT1_BenchmarkingReportStruct = OPT1_GenerateBenchmarkReport(s.benchmarkData_Master, workerBenchmarkDatas)
+    return reportStruct
 end
 
 
@@ -659,8 +671,8 @@ end
 
 
 function OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMaze, mapName::String)
-    verticalEstimationSize_Default::Int32 = 32
-    horizontalExtensionSize_Default::Int32 = 32
+    verticalEstimationSize_Default::Int32 = 64
+    horizontalExtensionSize_Default::Int32 = 64
     currentLevel = 1
 
     verticalEstimationSize::Int32 = verticalEstimationSize_Default
@@ -673,22 +685,14 @@ function OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMa
     initialWayPoints::Array{MapTile} = []
     if length(computedMaze.optionalWaypoints) == 0
         initialWayPoints = GenerateInitialWaypoints(computedMaze.startTile, computedMaze.endTile, (nranks - 1) * 2, computedMaze.allTiles)
-        println("Generated automatic waypoints")
     else
         initialWayPoints = GenerateCoreAppropriateWaypoints(computedMaze.optionalWaypoints, computedMaze.allTiles, nranks)
-        println("Loaded the waypoints from the map")
     end
 
     initialPaths::Vector{Tuple{MapTile,MapTile}} = Tuple{MapTile,MapTile}[]
     for i in 1:length(initialWayPoints)-1
         push!(initialPaths, (initialWayPoints[i], initialWayPoints[i+1]))
     end
-
-    println("\nThe following initialPaths were created: \n+++ +++ +++ ")
-    for path in initialPaths
-        println("A: $(path[1]) to B: $(path[2])")
-    end
-    println("+++ +++ +++\n")
 
     mapSize::Int = length(computedMaze.allTiles)
     initialMapDeliverySize::Int = Int(verticalEstimationSize * horizontalExtensionSize)
@@ -716,8 +720,8 @@ function OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMa
         Array{MapTile,1}[], # solved beauty paths
         initialWayPoints,
         MapTile[], # beautified waypoints
-        benchmarkData_Master
-    )
+        benchmarkData_Master,
+        Vector{MPI.Request}())
     return s
 end
 
@@ -726,31 +730,32 @@ end
 
 
 function OPT1_Master_HandleMapRequest(s::MasterState, status::MPI.MPI_Status, source, tag)
-    println("A map request from rank $source is incoming")
 
     # TODO: Figure out this recv thing, which sould be a regular blocking one as the data is already there
     mapRequest_ref = Ref{OPT1_MapRequest}()
     mapRequest_MPIRequest = MPI.Irecv!(mapRequest_ref, s.comm; source=source, tag=OPT1_MAP_REQUEST)
     MPI.Wait(mapRequest_MPIRequest)
     mapRequest::OPT1_MapRequest = mapRequest_ref[]
-    println("Master read the map request from $source")
 
-    levelBefore = s.currentLevel
+    # levelBefore = s.currentLevel
     OPT1_UpdateRecord(s.workerEntries[source], mapRequest)
     s.currentLevel = OPT1_TryLevelUp(s.workerEntries)
-    if levelBefore != s.currentLevel
-        println("The currentLevel after the map request was received is now $(s.currentLevel), and previously was $levelBefore")
-    end
 
-    s.verticalEstimationSize = s.verticalEstimationSize_Default * s.currentLevel^2
-    s.horizontalExtensionSize = s.horizontalExtensionSize_Default * s.currentLevel^2
+    s.verticalEstimationSize = s.verticalEstimationSize_Default * (s.currentLevel^2)
+    s.horizontalExtensionSize = s.horizontalExtensionSize_Default * (s.currentLevel^2)
+
+    # if levelBefore != s.currentLevel
+    #     println("The currentLevel after the map request was received is now $(s.currentLevel), and previously was $levelBefore")
+    #     println("After level up, the vertical estimation size is $(s.verticalEstimationSize), and the horizontal extension size is $(s.horizontalExtensionSize)")
+    # end
 
     sentMinMax::Array{Union{MinMaxY,Nothing}} = s.workerEntries[source].sentMinMax
     supplementMapTiles::Array{MapTile,1} =
         OPT1_GetEstimatedNecessaryCells(mapRequest.wayPointA, mapRequest.wayPointB, s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
 
-    MPI.Isend(supplementMapTiles, s.comm, dest=source, tag=OPT1_MAP_RESPONSE_DELIVERY)
-    println("Master Core sent a map supplement with $(length(supplementMapTiles)) tiles over to worker $source")
+    req = MPI.Isend(supplementMapTiles, s.comm, dest=source, tag=OPT1_MAP_RESPONSE_DELIVERY)
+    push!(s.iSendRequests, req)
+    # println("Master Core sent a map supplement with $(length(supplementMapTiles)) tiles over to worker $source")
 end
 
 
@@ -805,8 +810,9 @@ function OPT1_SendBeautificationJob(s::MasterState, worker)
     end
 
     beautificationJob::OPT1_Job = OPT1_Job(beautyStartTile, beautyEndTile)
-    MPI.Isend(beautificationJob, s.comm; dest=worker, tag=OPT1_BEAUTIFICATION_JOB_REQUEST)
-    println("Master core sent worker $worker his beautification job from $beautyStartTile to $beautyEndTile")
+    req = MPI.Isend(beautificationJob, s.comm; dest=worker, tag=OPT1_BEAUTIFICATION_JOB_REQUEST)
+    push!(s.iSendRequests, req)
+
 end
 
 
@@ -841,17 +847,14 @@ end
 function OPT1_Master_HandleIncomingSolvedPath(s::MasterState, status::MPI.MPI_Status, source, tag)
     # Receive path over MPI. Status guaranteed that something is present.
     incomingPathSize = MPI.Get_count(status, MapTile)
-    println("Master core is about to receive a path with count $incomingPathSize")
     receivedPath = Array{MapTile,1}(undef, incomingPathSize)
     incomingPath_MPIRequest = MPI.Irecv!(receivedPath, s.comm; source=source, tag=tag)
     MPI.Wait(incomingPath_MPIRequest)
 
     if tag == OPT1_PATH_DELIVERY_INITIAL_1
-        println("Master core just received path A from worker $source")
         @assert s.workerEntries[source].solvedPathA === nothing "Core $source sent solved path A, but this was already solved"
         s.workerEntries[source].solvedPathA = receivedPath
     elseif tag == OPT1_PATH_DELIVERY_INITIAL_2
-        println("Master core just received path B from worker $source")
         @assert s.workerEntries[source].solvedPathB === nothing "Core $source sent solved path B, but this was already solved"
         s.workerEntries[source].solvedPathB = receivedPath
 
@@ -863,7 +866,6 @@ function OPT1_Master_HandleIncomingSolvedPath(s::MasterState, status::MPI.MPI_St
         end
 
     elseif tag == OPT1_PATH_DELIVERY_BEAUTIFIED
-        println("### ### Master core received the beauty path from $source")
         s.workerEntries[source].solvedPathC = receivedPath
         push!(s.solved_beautyPaths, receivedPath)
         # // ::: -------------------------:: Early return here ::------------------------- ::: // 
@@ -909,7 +911,6 @@ end
 
 
 function OPT1_Master_SendInitialJobs(s::MasterState, paths::Vector{Tuple{MapTile,MapTile}})
-    pendingSends::Vector{MPI.Request} = MPI.Request[]
     pathIndex = 1
     @assert length(paths) == 2 * (s.nranks - 1) "length of paths was $(length(paths)) and rhs was $(2*(s.nranks - 1))"
     for i in 1:s.nranks-1 # for each rank
@@ -928,23 +929,19 @@ function OPT1_Master_SendInitialJobs(s::MasterState, paths::Vector{Tuple{MapTile
 
         both_estimatedNecessaryCells::Array{MapTile,1} = unique(vcat(pathA_estimatedNecessaryCells, pathB_estimatedNecessaryCells))
 
-        println("Created the necessary cells for paths $i and $(i+1) which has length $(length(both_estimatedNecessaryCells))")
         workerRank = i
 
         # mapDataForWorker::OPT1_PhsMapData = OPT1_PhsMapData(both_estimatedNecessaryCells)
-        println("The map data for worker $workerRank has $(length(both_estimatedNecessaryCells)) elements")
-        push!(pendingSends, MPI.Isend(both_estimatedNecessaryCells, s.comm; dest=workerRank, tag=OPT1_MAP_INITIAL_DELIVERY))
+        push!(s.iSendRequests, MPI.Isend(both_estimatedNecessaryCells, s.comm; dest=workerRank, tag=OPT1_MAP_INITIAL_DELIVERY))
 
         jobA::OPT1_Job = OPT1_Job(pathA[1], pathA[2])
         jobB::OPT1_Job = OPT1_Job(pathB[1], pathB[2])
         jobsForWorker::OPT1_JobRequest = OPT1_JobRequest(jobA, jobB, s.maxX, s.maxY)
-        push!(pendingSends, MPI.Isend(jobsForWorker, s.comm; dest=workerRank, tag=OPT1_INITIAL_JOB_REQUEST))
+        push!(s.iSendRequests, MPI.Isend(jobsForWorker, s.comm; dest=workerRank, tag=OPT1_INITIAL_JOB_REQUEST))
 
 
         push!(s.workerEntries, OPT1_WorkerEntry(workerRank, sentMinMax))
     end
-
-    println("Sent off all the jobs and mapdata to the workers.")
 end
 
 
@@ -960,14 +957,22 @@ end
 
 
 function OPT1_WorkerCore(comm, nranks, rank, masterCore)
+    T_startTime = time()
     w::WorkerState = OPT1_Worker_ReceiveInitialMapDataAndJobs(comm, rank)
+    w.benchmarkData_Worker.startTime = T_startTime
+    w.benchmarkData_Worker.timeOfReceivingInitialJob = time()
 
     OPT1_Worker_CompleteJobPair(w, OPT1_PATH_DELIVERY_INITIAL_1, OPT1_PATH_DELIVERY_INITIAL_2)
+    w.benchmarkData_Worker.secondsFromReceivingJobToHavingSentInitialPaths = time() - w.benchmarkData_Worker.timeOfReceivingInitialJob
 
-    println("Worker $(w.rank) is done with the initial job... Waiting for the beautification job...")
 
+    T_beforeReceivingBeautificationJob = time()
     OPT1_Worker_ReceiveBeautificationJobs!(w)
+    T_receivingBeautificationJob = time()
     OPT1_Worker_CompleteBeautyJob(w)
+    w.benchmarkData_Worker.waitingForBeautificationJobAfterSolvingInitial = time() - T_beforeReceivingBeautificationJob
+    w.benchmarkData_Worker.solvingBeautifiedPathAfterReceivingBeautificationJob = time() - T_receivingBeautificationJob
+    w.benchmarkData_Worker.secondsFromReceivingJobToHavingSentBeautifiedPaths = time() - w.benchmarkData_Worker.timeOfReceivingInitialJob
 
     # Wait until we receive a benchmarking request from the master. We don't want to pollute MPI
     # when other workers are still busy.
@@ -976,26 +981,29 @@ function OPT1_WorkerCore(comm, nranks, rank, masterCore)
     # benchmarkingRequestBuffer_ref = Ref{OPT1_WorkerBenchmarkingDataRequest}()
     benchmarkingRequestBuffer = Vector{Int64}
     benchmarkingRequestBuffer = MPI.recv(comm; source=masterCore, tag=OPT1_WORKER_BENCHMARK_REQUEST)
-    println("Worker $(rank) received a benchmarking request! Getting to work")
 
     mpiCompatibleBenchmark = mBenchmarkData_WorkerCore_MakeMPICompatbible(w.benchmarkData_Worker)
     MPI.Send(mpiCompatibleBenchmark, comm; dest=masterCore, tag=OPT1_WORKER_BENCHMARK_RESPONSE)
 
+    for iSendRequest::MPI.Request in w.iSendRequests
+        MPI.Wait(iSendRequest)
+    end
+
 end
 
 
 
 
 
-function OPT1_Worker_SendMapRequest(jobState::WorkerPathfindingState, isWayPointA::Bool, comm; isBeauty=false)::MPI.Request
+function OPT1_Worker_SendMapRequest(jobState::WorkerPathfindingState, isWayPointA::Bool, comm, w::WorkerState; isBeauty=false)
     mapRequest::OPT1_MapRequest = OPT1_MapRequest(jobState.startTile, jobState.endTile, isWayPointA, isBeauty)
     sendRequest::MPI.Request = MPI.Isend(mapRequest, comm, dest=0, tag=OPT1_MAP_REQUEST)
-    return sendRequest
+    push!(w.iSendRequests, sendRequest)
 end
 
 
-function OPT1_Worker_SendCompletedPath(solvedPath::Array{MapTile}, TAG_TO_USE, comm)
-    MPI.Isend(solvedPath, comm, dest=0, tag=TAG_TO_USE)
+function OPT1_Worker_SendCompletedPath(solvedPath::Array{MapTile}, TAG_TO_USE, comm, w::WorkerState)
+    push!(w.iSendRequests, MPI.Isend(solvedPath, comm, dest=0, tag=TAG_TO_USE))
 end
 
 
@@ -1014,14 +1022,14 @@ function OPT1_Worker_ReceiveAndProcessMapRequest!(w::WorkerState)
     end
 
     incomingTilesSize = MPI.Get_count(mapSupplyStatus, MapTile)
-    println("Worker $rank has received a probe signal for a map supplement\n Supposedly, the mapdata will have $incomingTilesSize elements")
+    # println("Worker $rank has received a probe signal for a map supplement\n Supposedly, the mapdata will have $incomingTilesSize elements")
 
     mapSupplyDelivery = Array{MapTile,1}(undef, incomingTilesSize)
 
     incomingSupplyRequest = MPI.Irecv!(mapSupplyDelivery, comm; source=0, tag=OPT1_MAP_RESPONSE_DELIVERY)
     MPI.Wait(incomingSupplyRequest)
 
-    println("Worker $rank received a new batch of tiles, with $(length(mapSupplyDelivery)) tiles.")
+    # println("Worker $rank received a new batch of tiles, with $(length(mapSupplyDelivery)) tiles.")
 
     for suppliedTile::MapTile in mapSupplyDelivery
         @assert !haskey(availableTiles, (suppliedTile.x, suppliedTile.y)) "Worker $rank already had the tile $suppliedTile in its storage"
@@ -1034,28 +1042,6 @@ function OPT1_Worker_ReceiveAndProcessMapRequest!(w::WorkerState)
     end
 end
 
-# function OPT1_Worker_ReceiveAndProcessMapRequest!(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, comm, rank)
-#     mapSupplyStatus = MPI.Probe(comm, MPI.Status, source=0, tag=OPT1_MAP_RESPONSE_DELIVERY)
-#     incomingTilesSize = MPI.Get_count(mapSupplyStatus, MapTile)
-#     println("Worker $rank has received a probe signal for a map supplement\n Supposedly, the mapdata will have $incomingTilesSize elements")
-
-#     mapSupplyDelivery = Array{MapTile,1}(undef, incomingTilesSize)
-
-#     incomingSupplyRequest = MPI.Irecv!(mapSupplyDelivery, comm; source=0, tag=OPT1_MAP_RESPONSE_DELIVERY)
-#     MPI.Wait(incomingSupplyRequest)
-
-#     println("Worker $rank received a new batch of tiles, with $(length(mapSupplyDelivery)) tiles.")
-
-#     for suppliedTile::MapTile in mapSupplyDelivery
-#         @assert !haskey(availableTiles, (suppliedTile.x, suppliedTile.y)) "Worker $rank already had the tile $suppliedTile in its storage"
-#         # if haskey(availableTiles, (suppliedTile.x, suppliedTile.y))
-#         #     println("~~~~~~~~~~~++++++++++++~~~~~~~Worker $rank already had the tile $suppliedTile in its storage")
-#         # end
-#         # if haskey(availableTiles, (suppliedTile.x, suppliedTile.y)) == false
-#         availableTiles[(suppliedTile.x, suppliedTile.y)] = suppliedTile
-#         # end
-#     end
-# end
 
 
 
@@ -1071,9 +1057,8 @@ function OPT1_Worker_ReceiveBeautificationJobs!(w::WorkerState)
     endTuple = (beautyJob.wayPointB.x, beautyJob.wayPointB.y)
 
     while (!haskey(w.availableTiles, startTuple) || !haskey(w.availableTiles, endTuple))
-        println("Worker $(w.rank) did not have the start or end tuples of the beautification job it just received.")
         mapRequest::OPT1_MapRequest = OPT1_MapRequest(beautyJob.wayPointA, beautyJob.wayPointB, false, true)
-        sendRequest::MPI.Request = MPI.Isend(mapRequest, comm, dest=0, tag=OPT1_MAP_REQUEST)
+        push!(w.iSendRequests, MPI.Isend(mapRequest, comm, dest=0, tag=OPT1_MAP_REQUEST))
         OPT1_Worker_ReceiveAndProcessMapRequest!(w)
     end
 
@@ -1081,7 +1066,6 @@ function OPT1_Worker_ReceiveBeautificationJobs!(w::WorkerState)
     beauty_endTile = w.availableTiles[endTuple]
 
     w.beautyJobState = WorkerPathfindingState(beauty_startTile, beauty_endTile)
-    println("Worker $(w.rank) received a beauty job with startTile $(beautyJob.wayPointA) and endTile $(beautyJob.wayPointB)")
 end
 
 
@@ -1095,14 +1079,12 @@ function OPT1_Worker_ReceiveInitialMapDataAndJobs(comm, rank)::WorkerState
 
     initialMapDataDelivery_Status = MPI.Probe(comm, MPI.Status, source=0, tag=OPT1_MAP_INITIAL_DELIVERY)
     mapDataCount = MPI.Get_count(initialMapDataDelivery_Status, MapTile)
-    println("Worker $rank has received a probe signal for the initial map delivery\nThe mapdata will have $(mapDataCount) elements")
 
     initialMapDataDelivery = Array{MapTile,1}(undef, mapDataCount)
 
     initialMapDataDelivery_MPIRequest = MPI.Irecv!(initialMapDataDelivery, comm; source=0, tag=OPT1_MAP_INITIAL_DELIVERY)
     MPI.Wait(initialMapDataDelivery_MPIRequest)
 
-    println("Worker $rank received the initial map data delivery, which has $(length(initialMapDataDelivery)) map tiles")
 
     # This is probably very slow.
     availableTiles::Dict{Tuple{Int32,Int32},MapTile} = Dict{Tuple{Int32,Int32},MapTile}()
@@ -1133,7 +1115,7 @@ function OPT1_Worker_ReceiveInitialMapDataAndJobs(comm, rank)::WorkerState
     workerBenchmarking = mBenchmarkData_WorkerCore(
         rank
     )
-    w::WorkerState = WorkerState(comm, rank, availableTiles, maxX, maxY, jobAState, jobBState, nothing, workerBenchmarking)
+    w::WorkerState = WorkerState(comm, rank, availableTiles, maxX, maxY, jobAState, jobBState, nothing, workerBenchmarking, Vector{MPI.Request}())
     return w
 end
 
@@ -1147,16 +1129,12 @@ function OPT1_Worker_CompleteBeautyJob(w::WorkerState)
         if jobSolveResult === nothing
             # Request for more data to come in, and wait for it
             w.benchmarkData_Worker.numberOfTimesNewMapDataWasRequested += 1
-            println("### ### ###: Worker $(w.rank) has requested more tiles during the beautification process!!! Avoid this, as there is no latency hiding in this phase")
-            sendReq = OPT1_Worker_SendMapRequest(w.beautyJobState, false, w.comm; isBeauty=true)
+            OPT1_Worker_SendMapRequest(w.beautyJobState, false, w.comm, w; isBeauty=true)
             w.beautyJobState.postponed = true
             OPT1_Worker_ReceiveAndProcessMapRequest!(w)
-            println("Worker $(w.rank) received its map supplement during the beauty stage")
         else
             beautyJobSolved = true
-            println("### ### ### Worker $(w.rank) completed his beauty job!")
-            OPT1_Worker_SendCompletedPath(jobSolveResult, OPT1_PATH_DELIVERY_BEAUTIFIED, w.comm)
-            println("### ### ### Worker $(w.rank) has sent his completed beauty path to the master core")
+            OPT1_Worker_SendCompletedPath(jobSolveResult, OPT1_PATH_DELIVERY_BEAUTIFIED, w.comm, w)
         end
     end
 end
@@ -1167,26 +1145,21 @@ function OPT1_Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobBComp
     jobASolved::Bool = false
     jobBSolved::Bool = false
 
-    println("Worker $(w.rank) will solve paths ($(w.jobAState.startTile), $(w.jobAState.endTile)) and  ($(w.jobBState.startTile), $(w.jobBState.endTile))")
     while !jobASolved || !jobBSolved
 
         if !jobASolved
             # Check if Job A's supplement has come in the mail yet.
             if w.jobAState.postponed
                 OPT1_Worker_ReceiveAndProcessMapRequest!(w)
-                println("Worker $(w.rank) has received its JobA map supplement")
             end
             jobA_solveResult = OPT1_CustomAStar(w.availableTiles, w.maxX, w.maxY, w.jobAState)
             if jobA_solveResult === nothing
-                println("Worker $(w.rank) needs more data to solve its local path for job A.")
                 w.benchmarkData_Worker.numberOfTimesNewMapDataWasRequested += 1
-                sendReq = OPT1_Worker_SendMapRequest(w.jobAState, true, w.comm)
+                OPT1_Worker_SendMapRequest(w.jobAState, true, w.comm, w)
                 w.jobAState.postponed = true
             else
-                println("worker $(w.rank) created a local path of length $(length(jobA_solveResult))")
                 jobASolved = true
-                OPT1_Worker_SendCompletedPath(jobA_solveResult, jobACompletionTag, w.comm)
-                println("Worker $(w.rank) sent back a path that starts at $(jobA_solveResult[end]) and ends at $(jobA_solveResult[1])")
+                OPT1_Worker_SendCompletedPath(jobA_solveResult, jobACompletionTag, w.comm, w)
             end
 
         end
@@ -1197,19 +1170,15 @@ function OPT1_Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobBComp
             # Check if Job B's supplement has come in the mail yet 
             if w.jobBState.postponed
                 OPT1_Worker_ReceiveAndProcessMapRequest!(w)
-                println("Worker $(w.rank) has received its JobB map supplement")
             end
             jobB_solveResult = OPT1_CustomAStar(w.availableTiles, w.maxX, w.maxY, w.jobBState)
             if jobB_solveResult === nothing
-                println("Worker $(w.rank) needs more data to solve its local path for job B.")
                 w.benchmarkData_Worker.numberOfTimesNewMapDataWasRequested += 1
-                sendReq = OPT1_Worker_SendMapRequest(w.jobBState, false, w.comm)
+                OPT1_Worker_SendMapRequest(w.jobBState, false, w.comm, w)
                 w.jobBState.postponed = true
             else
-                println("worker $(w.rank) created a local path of length $(length(jobB_solveResult))")
                 jobBSolved = true
-                OPT1_Worker_SendCompletedPath(jobB_solveResult, jobBCompletionTag, w.comm)
-                println("Worker $(w.rank) sent back a path that starts at $(jobB_solveResult[end]) and ends at $(jobB_solveResult[1])")
+                OPT1_Worker_SendCompletedPath(jobB_solveResult, jobBCompletionTag, w.comm, w)
             end
 
         end
@@ -1259,10 +1228,6 @@ function OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, maxX
             northX = state.currentTile.x
             north = get(availableTiles, (northX, northY), nothing)
             if north === nothing
-                println("Failed to find the northtile with ($northX, $northY)")
-                println("The worker has $(length(keys(availableTiles))) tiles")
-                # println("The tiles worker does have:")
-                # display(availableTiles)
                 return false
             end
             push!(neighbors, north)
@@ -1273,10 +1238,6 @@ function OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, maxX
             eastY = state.currentTile.y
             east = get(availableTiles, (eastX, eastY), nothing)
             if east === nothing
-                println("Failed to find the easttile with ($eastX, $eastY)")
-                println("The worker has $(length(keys(availableTiles))) tiles")
-                # println("The tiles worker does have:")
-                # display(availableTiles)
                 return false
             end
             push!(neighbors, east)
@@ -1287,10 +1248,6 @@ function OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, maxX
             southX = state.currentTile.x
             south = get(availableTiles, (southX, southY), nothing)
             if south === nothing
-                println("Failed to find the southtile with ($southX, $southY)")
-                println("The worker has $(length(keys(availableTiles))) tiles")
-                # println("The tiles worker does have:")
-                # display(availableTiles)
                 return false
             end
             push!(neighbors, south)
@@ -1301,10 +1258,6 @@ function OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, maxX
             westY = state.currentTile.y
             west = get(availableTiles, (westX, westY), nothing)
             if west === nothing
-                println("Failed to find the westtile with ($westX, $westY)")
-                println("The worker has $(length(keys(availableTiles))) tiles")
-                # println("The tiles worker does have:")
-                # display(availableTiles)
                 return false
             end
             push!(neighbors, west)

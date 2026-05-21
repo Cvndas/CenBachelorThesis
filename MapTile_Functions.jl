@@ -122,7 +122,6 @@ function PlaceBlobs(pathMapTiles::Array{MutableMapTile}, xMin::Int32, xMax::Int3
         minBlobSize = 1
     end
 
-    println("Going to place $blobCount blobs of $identifier")
 
     allTilesDict = Dict{Tuple{Int32,Int32},MutableMapTile}()
     for mapTile::MutableMapTile in pathMapTiles
@@ -142,7 +141,6 @@ end
 
 
 function GeneratePathTiles(walls::Array{Tuple{Int32,Int32}}, xMin::Int32, xMax::Int32, yMin::Int32, yMax::Int32)
-    println("Going to create default map tiles for everything that is not a wall")
     pathMapTiles = MutableMapTile[]
     wallsSet = Set{Tuple{Int32,Int32}}()
     for wall in walls
@@ -156,14 +154,10 @@ function GeneratePathTiles(walls::Array{Tuple{Int32,Int32}}, xMin::Int32, xMax::
             end
         end
     end
-    println("Going to place the blobs onto the map")
 
     PlaceBlobs(pathMapTiles, xMin, xMax, yMin, yMax, :DirtBlob)
-    println("Placed dirt")
     PlaceBlobs(pathMapTiles, xMin, xMax, yMin, yMax, :WaterBlob)
-    println("Placed water")
     PlaceBlobs(pathMapTiles, xMin, xMax, yMin, yMax, :BoostBlob)
-    println("Placed boost")
 
     # DIRTBLOBS
 

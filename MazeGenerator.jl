@@ -11,7 +11,6 @@ function _MakeEndTileReachable!(path, walls, evacuationVisited, currentEvacuator
 
     for neighbor in neighbors
         if neighbor in path
-            println("Made the end tile reachable.")
             return true
         end
     end
@@ -44,7 +43,6 @@ function MakeEndTileReachable!(path, walls, endTile, xMin, xMax, yMin, yMax)
 end
 
 function PrimsMazeGenerator(xMin::Int32, xMax::Int32, yMin::Int32, yMax::Int32)::Array{Tuple{Int32,Int32}}
-    println("Starting prims maze generation")
 
 
     frontier = Set{Tuple{Int32,Int32}}()
@@ -88,7 +86,6 @@ function PrimsMazeGenerator(xMin::Int32, xMax::Int32, yMin::Int32, yMax::Int32):
             AddNeighbors!(frontier, path, candidateFromFrontier, xMin, xMax, yMin, yMax)
         end
     end
-    println("Going to extract the walls from the path")
 
     walls = Tuple{Int32,Int32}[]
     for x::Int32 in xMin:xMax, y::Int32 in yMin:yMax
@@ -107,7 +104,6 @@ function PrimsMazeGenerator(xMin::Int32, xMax::Int32, yMin::Int32, yMax::Int32):
 
     # println("The path: ")
     # display(path)
-    println("Generated a maze via prims algorithm.")
 
     return walls
 end
@@ -118,7 +114,6 @@ function PunctureHoles!(points)
     filter!(x -> rand(1:100) > 20, points)
     wallsAfter = length(points)
     holesPunctured = wallsBefore - wallsAfter
-    println("Punctured $holesPunctured holes into the wall, reducing the number of wall tiles from $wallsBefore to $wallsAfter")
 end
 
 

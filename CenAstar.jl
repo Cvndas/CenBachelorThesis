@@ -115,7 +115,6 @@ end
 
 
 function ComputeMaze(mazeSize_X::Int32, mazeSize_Y::Int32)::ComputedMaze
-    println("\n\n--- GENERATING A MAZE --\n")
     xMin::Int32 = 1
     xMax::Int32 = mazeSize_X
     yMin::Int32 = 1
@@ -128,16 +127,11 @@ function ComputeMaze(mazeSize_X::Int32, mazeSize_Y::Int32)::ComputedMaze
     PunctureHoles!(walls)
 
     mutable_wallMapTiles = [CreateWall(Int32(x), Int32(y)) for (x, y) in walls]
-    println("Generated the walls")
     mutable_pathMapTiles = GeneratePathTiles(walls, xMin, xMax, yMin, yMax)
-    println("Generated the path tiles")
     mutable_mapBorders = GenerateMapBorders(xMin, xMax, yMin, yMax)
-    println("Generated the map borders")
 
     mutable_startTile = FindExistingMapTile(xMin, yMin, mutable_pathMapTiles)
-    println("Found the start tile")
     mutable_endTile = FindExistingMapTile(xMax, yMax, mutable_pathMapTiles)
-    println("Found the end tile")
 
     mutable_traversablePaths = [mutable_wallMapTiles; mutable_pathMapTiles]
 
@@ -161,7 +155,6 @@ function ComputeMaze(mazeSize_X::Int32, mazeSize_Y::Int32)::ComputedMaze
     end
 
     computedMaze::ComputedMaze = ComputedMaze(startTile, endTile, mapBorders, allTiles2DArray, [])
-    println("\n--- MAZE GENERATION DONE --\n\n")
     return computedMaze
 end
 
@@ -176,7 +169,7 @@ function InitializeSeed()::Int
     if seed < 0
         seed = Int(round(time()))
     end
-    println("Initialized with seed $seed")
+    # println("Initialized with seed $seed")
     Random.seed!(seed)
     return seed
 end

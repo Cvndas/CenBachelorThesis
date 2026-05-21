@@ -47,7 +47,7 @@ function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
         processorName = MPI.Get_processor_name()
         # println("Hello from $processorName, I am process $rank of $nranks processes!")
 
-        CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, false)
+        CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore)
 
         MPI.Finalize()
     end
