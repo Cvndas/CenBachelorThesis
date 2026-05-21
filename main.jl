@@ -53,11 +53,10 @@ function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
     end
 
     # Here, specify what to run
-    run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
     run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
-    run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
-    run(`$(mpiexec()) -np 8 julia --project=. -e $code`)
-    run(`$(mpiexec()) -np 16 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 5 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 9 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 17 julia --project=. -e $code`)
     # run(`$(mpiexec()) -np 32 julia --project=. -e $code`)
 end
 

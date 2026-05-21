@@ -263,7 +263,11 @@ end
 #
 
 function GetMiddleElementOfArray(theArray)
-    return theArray[length(theArray)÷2]
+    middle = length(theArray) ÷ 2
+    if middle < 1
+        middle = 1
+    end
+    return theArray[middle]
 end
 
 
@@ -481,49 +485,52 @@ end
 
 
 function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore)
-    worker::String = if nranks == 2
-        "worker"
-    else
-        "workers"
-    end
-    if rank == 0
-        println("Running BenchmarkingRun A with $(nranks-1) $(worker)")
-    end
 
-    reportStructs::Vector{OPT1_BenchmarkingReportStruct} = Vector{OPT1_BenchmarkingReportStruct}()
+    mazeSizes = [20, 100, 200, 500, 1000]
+    # mazeSizes = [20, 100]
+    for mazeSizeUniversal in mazeSizes
+        mazeSizeX = mazeSizeUniversal
+        mazeSizeY = mazeSizeUniversal
 
-    config = include("Config.jl")
-    iterations = config.AVERAGING_ITERATIONS
-
-    for i in 1:iterations+1
-
-        # Discarding the result of the first run, due to warmup
-        if i == 1
-            continue
-        end
-
-        if rank == 0
-            reportStruct::OPT1_BenchmarkingReportStruct = OPT1_Entry(comm, nranks, rank, masterCore, false)
-            push!(reportStructs, reportStruct)
+        worker::String = if nranks == 2
+            "worker"
         else
-            OPT1_Entry(comm, nranks, rank, masterCore, false)
+            "workers"
         end
-    end
-    if rank == 0
-        # TODO: Run the single threaded A*, put its info into the report struct too.
+        if rank == 0
+            println("Running BenchmarkingRun A with $(nranks-1) $(worker)")
+        end
 
-        println("The AVERAGE report:")
-        averageReport = OPT1_AverageBenchmarkingReportStructs(reportStructs)
-        println(OPT1_GenerateReportString(averageReport))
+        reportStructs::Vector{OPT1_BenchmarkingReportStruct} = Vector{OPT1_BenchmarkingReportStruct}()
 
-        fileName = OPT1_GenerateReportFilename(averageReport)
+        config = include("Config.jl")
+        iterations = config.AVERAGING_ITERATIONS
 
-        path = joinpath("Benchmarks", "RunA")
-        mkpath(path)
+        for i in 1:iterations+1
+            if rank == 0
+                reportStruct::OPT1_BenchmarkingReportStruct = OPT1_Entry(comm, nranks, rank, masterCore, false, mazeSizeX, mazeSizeY)
+                if i != 1
+                    push!(reportStructs, reportStruct)
+                end
+            else
+                OPT1_Entry(comm, nranks, rank, masterCore, false, mazeSizeX, mazeSizeY)
+            end
+        end
+        if rank == 0
+            # println("The AVERAGE report:")
+            averageReport = OPT1_AverageBenchmarkingReportStructs(reportStructs)
+            println(OPT1_GenerateReportString(averageReport))
 
-        filePath = joinpath(path, fileName)
-        open(filePath, "w") do file
-            serialize(file, averageReport)
+            fileName = OPT1_GenerateReportFilename(averageReport)
+
+            path = joinpath("Benchmarks", "RunA")
+            mkpath(path)
+
+            filePath = joinpath(path, fileName)
+            open(filePath, "w") do file
+                serialize(file, averageReport)
+            end
+            println("Completed the benchmarking for a maze of size $(mazeSizeX)x$(mazeSizeY) with $(nranks) processors")
         end
     end
 
@@ -537,8 +544,7 @@ end
 #
 #
 #
-function OPT1_Entry(comm, nranks, rank, masterCore, handcraftedTestMap::Bool)
-    config = include("Config.jl")
+function OPT1_Entry(comm, nranks, rank, masterCore, handcraftedTestMap::Bool, mazeSize_X, mazeSize_Y)
     if rank == masterCore
         seed::Int = CenAstar.InitializeSeed()
         mapName::String = ""
@@ -548,8 +554,8 @@ function OPT1_Entry(comm, nranks, rank, masterCore, handcraftedTestMap::Bool)
             # TODO: Proper custom map handling
             mapName = "CustomMap_TODONAMEPARSE"
         else
-            width::Int32 = Int32(config.MAZE_SIZE_X)
-            height::Int32 = Int32(config.MAZE_SIZE_Y)
+            width::Int32 = Int32(mazeSize_X)
+            height::Int32 = Int32(mazeSize_Y)
             computedMaze = ComputeMaze(width, height)
             mapName = "RandomMap_Seed:$(seed)_Width:$(width)_Height:$(height)"
         end
@@ -574,6 +580,7 @@ function OPT1_Entry(comm, nranks, rank, masterCore, handcraftedTestMap::Bool)
 end
 
 
+singleThreadedSolveDict::Dict{Tuple{Int32,Int32},Tuple{Float64,Int}} = Dict()
 
 function OPT1_MasterCore(comm, nranks, rank, masterCore, computedMaze::ComputedMaze, mapName::String)
     T_startTime = time()
@@ -668,9 +675,21 @@ function OPT1_MasterCore(comm, nranks, rank, masterCore, computedMaze::ComputedM
     s.benchmarkData_Master.finalLevel = s.currentLevel
     s.benchmarkData_Master.finalSize = s.horizontalExtensionSize * s.verticalEstimationSize
 
-    # TODO: Move this out somewhere, so the same code isn't run 5 times
-    stSeconds = @elapsed stSolution = st_AStar(s.computedMaze.startTile, s.computedMaze.endTile, s.computedMaze.allTiles)
-    stCost = ComputePathCost(stSolution)
+    # Limitation here is that maxX and maxY have to be different from previous mazes for this to be correct
+    stCacheKey = (s.maxX, s.maxY)
+    if haskey(singleThreadedSolveDict, stCacheKey)
+        stSeconds = singleThreadedSolveDict[stCacheKey][1]
+        stCost = singleThreadedSolveDict[stCacheKey][2]
+        # println("The single threaded solve for a maze of $(s.maxX), $(s.maxY) was already cached")
+    else
+        stSeconds = @elapsed stSolution = st_AStar(s.computedMaze.startTile, s.computedMaze.endTile, s.computedMaze.allTiles)
+        stCost = ComputePathCost(stSolution)
+        singleThreadedSolveDict[stCacheKey] = (stSeconds, stCost)
+        # println("The single threaded solve for a maze of $(s.maxX), $(s.maxY) was freshly computed")
+
+    end
+
+
 
     reportStruct::OPT1_BenchmarkingReportStruct = OPT1_GenerateBenchmarkReport(s.benchmarkData_Master, workerBenchmarkDatas, stCost, stSeconds)
 
