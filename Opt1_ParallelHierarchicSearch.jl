@@ -175,8 +175,11 @@ mutable struct OPT1_WorkerEntry
     # Beautification path
     solvedPathC::Union{Array{MapTile,1},Nothing}
 
-    function OPT1_WorkerEntry(workerRank::Int, sentMinMax::Array{Union{MinMaxY,Nothing}})
-        new(workerRank, 1, 1, nothing, nothing, sentMinMax, nothing)
+    jobA_wayPoints::Tuple{MapTile,MapTile}
+    jobB_wayPoints::Tuple{MapTile,MapTile}
+
+    function OPT1_WorkerEntry(workerRank::Int, sentMinMax::Array{Union{MinMaxY,Nothing}}, jobA_wayPoints, jobB_wayPoints)
+        new(workerRank, 1, 1, nothing, nothing, sentMinMax, nothing, jobA_wayPoints, jobB_wayPoints)
     end
 end
 
@@ -594,13 +597,15 @@ function OPT1_MasterCore(comm, nranks, rank, masterCore, computedMaze::ComputedM
         s.benchmarkData_Master.secondsToSendInitialPathsAndJobsToAllWorkers =
             @elapsed OPT1_Master_SendInitialJobs(s, s.initialPaths)
 
+        OPT1_PreSendMapSupplements(s)
+
         while OPT1_AllBeautyPathsAreReceived(s.workerEntries) == false
             status = MPI.Probe(comm, MPI.Status; source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG)
             source = MPI.Get_source(status)
             tag = MPI.Get_tag(status)
             # // ::: -------------------------:: Handling a Map supply request ::------------------------- ::: // 
             if tag == OPT1_MAP_REQUEST
-                OPT1_Master_HandleMapRequest(s, status, source, tag)
+                OPT1_Master_HandleMapRequest(s, source)
                 s.benchmarkData_Master.timesAMapSupplementWasRequested += 1
                 # ::: -------------------------:: Handling an incoming path ::------------------------- ::: // 
             elseif tag == OPT1_PATH_DELIVERY_INITIAL_1 || tag == OPT1_PATH_DELIVERY_INITIAL_2 || tag == OPT1_PATH_DELIVERY_BEAUTIFIED
@@ -704,8 +709,8 @@ end
 function OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMaze, mapName::String)
     # verticalEstimationSize_Default::Int32 = 99999999
     # horizontalExtensionSize_Default::Int32 = 99999999
-    verticalEstimationSize_Default::Int32 = 64
-    horizontalExtensionSize_Default::Int32 = 64
+    verticalEstimationSize_Default::Int32 = 32
+    horizontalExtensionSize_Default::Int32 = 16
     currentLevel = 1
 
     verticalEstimationSize::Int32 = verticalEstimationSize_Default
@@ -761,26 +766,73 @@ end
 
 
 
+function OPT1_Master_SendInitialJobs(s::MasterState, paths::Vector{Tuple{MapTile,MapTile}})
+    pathIndex = 1
+    @assert length(paths) == 2 * (s.nranks - 1) "length of paths was $(length(paths)) and rhs was $(2*(s.nranks - 1))"
+    for i in 1:s.nranks-1 # for each rank
+        pathA = paths[pathIndex]
 
-function OPT1_Master_HandleMapRequest(s::MasterState, status::MPI.MPI_Status, source, tag)
+        sentMinMax::Array{Union{MinMaxY,Nothing}} = fill(nothing, s.maxX)
+
+        pathA_estimatedNecessaryCells::Array{MapTile,1} =
+            OPT1_GetEstimatedNecessaryCells(pathA[1], pathA[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
+        pathIndex += 1
+
+        pathB = paths[pathIndex]
+        pathB_estimatedNecessaryCells::Array{MapTile,1} =
+            OPT1_GetEstimatedNecessaryCells(pathB[1], pathB[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
+        pathIndex += 1
+
+        both_estimatedNecessaryCells::Array{MapTile,1} = unique(vcat(pathA_estimatedNecessaryCells, pathB_estimatedNecessaryCells))
+
+        workerRank = i
+
+        # mapDataForWorker::OPT1_PhsMapData = OPT1_PhsMapData(both_estimatedNecessaryCells)
+        push!(s.iSendRequests, MPI.Isend(both_estimatedNecessaryCells, s.comm; dest=workerRank, tag=OPT1_MAP_INITIAL_DELIVERY))
+
+        jobA::OPT1_Job = OPT1_Job(pathA[1], pathA[2])
+        jobB::OPT1_Job = OPT1_Job(pathB[1], pathB[2])
+        jobsForWorker::OPT1_JobRequest = OPT1_JobRequest(jobA, jobB, s.maxX, s.maxY)
+
+        push!(s.iSendRequests, MPI.Isend(jobsForWorker, s.comm; dest=workerRank, tag=OPT1_INITIAL_JOB_REQUEST))
+
+
+        push!(s.workerEntries, OPT1_WorkerEntry(workerRank, sentMinMax, pathA, pathB))
+    end
+end
+
+
+function OPT1_PreSendMapSupplements(s::MasterState)
+    for worker in s.workerEntries
+        # Leveling up path A
+        virtualMapRequest_A::OPT1_MapRequest = OPT1_MapRequest(worker.jobA_wayPoints[1], worker.jobA_wayPoints[2], true, false)
+        virtualMapRequest_B::OPT1_MapRequest = OPT1_MapRequest(worker.jobB_wayPoints[1], worker.jobB_wayPoints[2], false, false)
+        OPT1_Master_RespondToMapRequest(s, virtualMapRequest_A, worker.workerRank)
+        OPT1_Master_RespondToMapRequest(s, virtualMapRequest_B, worker.workerRank)
+    end
+end
+
+
+function OPT1_Master_HandleMapRequest(s::MasterState, source)
 
     # TODO: Figure out this recv thing, which sould be a regular blocking one as the data is already there
+    # TODO: It's probably that it needs to be Recv! instead of recv!. Try later
     mapRequest_ref = Ref{OPT1_MapRequest}()
     mapRequest_MPIRequest = MPI.Irecv!(mapRequest_ref, s.comm; source=source, tag=OPT1_MAP_REQUEST)
     MPI.Wait(mapRequest_MPIRequest)
     mapRequest::OPT1_MapRequest = mapRequest_ref[]
+    OPT1_Master_RespondToMapRequest(s, mapRequest, source)
 
+end
+
+function OPT1_Master_RespondToMapRequest(s::MasterState, mapRequest::OPT1_MapRequest, source)
     # levelBefore = s.currentLevel
     OPT1_UpdateRecord(s.workerEntries[source], mapRequest)
     s.currentLevel = OPT1_TryLevelUp(s.workerEntries)
 
-    s.verticalEstimationSize = s.verticalEstimationSize_Default * (s.currentLevel^2)
-    s.horizontalExtensionSize = s.horizontalExtensionSize_Default * (s.currentLevel^2)
+    s.verticalEstimationSize = s.verticalEstimationSize_Default * (s.currentLevel * 3)
+    s.horizontalExtensionSize = s.horizontalExtensionSize_Default * (s.currentLevel * 3)
 
-    # if levelBefore != s.currentLevel
-    #     println("The currentLevel after the map request was received is now $(s.currentLevel), and previously was $levelBefore")
-    #     println("After level up, the vertical estimation size is $(s.verticalEstimationSize), and the horizontal extension size is $(s.horizontalExtensionSize)")
-    # end
 
     sentMinMax::Array{Union{MinMaxY,Nothing}} = s.workerEntries[source].sentMinMax
     supplementMapTiles::Array{MapTile,1} =
@@ -790,6 +842,7 @@ function OPT1_Master_HandleMapRequest(s::MasterState, status::MPI.MPI_Status, so
     push!(s.iSendRequests, req)
     # println("Master Core sent a map supplement with $(length(supplementMapTiles)) tiles over to worker $source")
 end
+
 
 
 
@@ -943,41 +996,6 @@ end
 
 
 
-function OPT1_Master_SendInitialJobs(s::MasterState, paths::Vector{Tuple{MapTile,MapTile}})
-    pathIndex = 1
-    @assert length(paths) == 2 * (s.nranks - 1) "length of paths was $(length(paths)) and rhs was $(2*(s.nranks - 1))"
-    for i in 1:s.nranks-1 # for each rank
-        pathA = paths[pathIndex]
-
-        sentMinMax::Array{Union{MinMaxY,Nothing}} = fill(nothing, s.maxX)
-
-        pathA_estimatedNecessaryCells::Array{MapTile,1} =
-            OPT1_GetEstimatedNecessaryCells(pathA[1], pathA[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
-        pathIndex += 1
-
-        pathB = paths[pathIndex]
-        pathB_estimatedNecessaryCells::Array{MapTile,1} =
-            OPT1_GetEstimatedNecessaryCells(pathB[1], pathB[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
-        pathIndex += 1
-
-        both_estimatedNecessaryCells::Array{MapTile,1} = unique(vcat(pathA_estimatedNecessaryCells, pathB_estimatedNecessaryCells))
-
-        workerRank = i
-
-        # mapDataForWorker::OPT1_PhsMapData = OPT1_PhsMapData(both_estimatedNecessaryCells)
-        push!(s.iSendRequests, MPI.Isend(both_estimatedNecessaryCells, s.comm; dest=workerRank, tag=OPT1_MAP_INITIAL_DELIVERY))
-
-        jobA::OPT1_Job = OPT1_Job(pathA[1], pathA[2])
-        jobB::OPT1_Job = OPT1_Job(pathB[1], pathB[2])
-        jobsForWorker::OPT1_JobRequest = OPT1_JobRequest(jobA, jobB, s.maxX, s.maxY)
-        push!(s.iSendRequests, MPI.Isend(jobsForWorker, s.comm; dest=workerRank, tag=OPT1_INITIAL_JOB_REQUEST))
-
-
-        push!(s.workerEntries, OPT1_WorkerEntry(workerRank, sentMinMax))
-    end
-end
-
-
 
 
 
@@ -1003,6 +1021,26 @@ function OPT1_WorkerCore(comm, nranks, rank, masterCore)
     OPT1_Worker_ReceiveBeautificationJobs!(w)
     T_receivingBeautificationJob = time()
     OPT1_Worker_CompleteBeautyJob(w)
+    println("The worker $rank completed the beauty job")
+
+    # Draining the remaining map supplements that are in the mailbox, as the master core
+    # always stays ahead by initially sending another map supplement, which was
+    # transparent to the worker.
+    # TODO: Figure out if this is always going to be precisely 2
+    remainingMapSupplementCount = 2
+    for i in 1:remainingMapSupplementCount
+        mapSupplyStatus = MPI.Probe(comm, MPI.Status, source=0, tag=OPT1_MAP_RESPONSE_DELIVERY)
+
+        remainingMapSupplementCount += 1
+        incomingTilesSize = MPI.Get_count(mapSupplyStatus, MapTile)
+        mapSupplyDelivery = Array{MapTile,1}(undef, incomingTilesSize)
+        incomingSupplyRequest = MPI.Irecv!(mapSupplyDelivery, comm; source=0, tag=OPT1_MAP_RESPONSE_DELIVERY)
+        MPI.Wait(incomingSupplyRequest)
+    end
+
+    # println("Worker drained all the remaining map supplements that were in the mailbox.")
+
+
     w.benchmarkData_Worker.waitingForBeautificationJobAfterSolvingInitial = time() - T_beforeReceivingBeautificationJob
     w.benchmarkData_Worker.solvingBeautifiedPathAfterReceivingBeautificationJob = time() - T_receivingBeautificationJob
     w.benchmarkData_Worker.secondsFromReceivingJobToHavingSentBeautifiedPaths = time() - w.benchmarkData_Worker.timeOfReceivingInitialJob
