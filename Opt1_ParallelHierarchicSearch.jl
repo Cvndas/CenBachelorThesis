@@ -569,7 +569,7 @@ function OPT1_Entry(comm, nranks, rank, masterCore, handcraftedTestMap::Bool, ma
     MPI.Barrier(comm)
 
     if rank == masterCore
-        reportStruct::OPT1_BenchmarkingReportStruct = OPT1_MasterCore(comm, nranks, rank, masterCore, computedMaze, mapName)
+        reportStruct::OPT1_BenchmarkingReportStruct = OPT1_MasterCore(comm, nranks, computedMaze, mapName)
     else
         OPT1_WorkerCore(comm, nranks, rank, masterCore)
     end
@@ -586,7 +586,9 @@ end
 
 
 
-function OPT1_MasterCore(comm, nranks, rank, masterCore, computedMaze::ComputedMaze, mapName::String)
+
+
+function OPT1_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::String)
     T_startTime = time()
     T_startToBeautified::Float64 = @elapsed begin
         T_offlinePrelude::Float64 =
@@ -1008,6 +1010,7 @@ end
 
 
 function OPT1_WorkerCore(comm, nranks, rank, masterCore)
+    # TODO: Measure how many beautification jobs each worker does, worst case, best case, average case. Add to benchmark
     T_startTime = time()
     w::WorkerState = OPT1_Worker_ReceiveInitialMapDataAndJobs(comm, rank)
     w.benchmarkData_Worker.startTime = T_startTime
