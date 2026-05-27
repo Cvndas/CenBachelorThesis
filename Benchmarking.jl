@@ -14,7 +14,7 @@ end
 
 
 
-mutable struct mBenchmarkData_WorkerCore
+mutable struct BenchmarkData_WorkerCore
     workerId::Int # WorkerId is workerRank - 1
     numberOfOccasionsMapDataWasNotAvailableAndIHadToWait::Int
 
@@ -39,7 +39,7 @@ mutable struct mBenchmarkData_WorkerCore
     rawComputationSeconds_Beautify::Float64
 
 
-    function mBenchmarkData_WorkerCore(workerRank::Int)::mBenchmarkData_WorkerCore
+    function BenchmarkData_WorkerCore(workerRank::Int)::BenchmarkData_WorkerCore
         new(
             workerRank, # Worker id
             0, # Number of occasions map data was not available and we had to wait
@@ -67,7 +67,7 @@ mutable struct mBenchmarkData_WorkerCore
     end
 
     # This is an empty constructor, intended as a buffer for the master to receive the incoming data over MPI
-    function mBenchmarkData_WorkerCore()::mBenchmarkData_WorkerCore
+    function BenchmarkData_WorkerCore()::BenchmarkData_WorkerCore
         new(
             -77,
             #
@@ -95,46 +95,7 @@ mutable struct mBenchmarkData_WorkerCore
 end
 
 
-function mBenchmarkData_WorkerCore_MakeMPICompatbible(mutableVer::mBenchmarkData_WorkerCore)::BenchmarkData_WorkerCore
-    m::mBenchmarkData_WorkerCore = mutableVer
-    return BenchmarkData_WorkerCore(
-        m.workerId,
-        m.numberOfOccasionsMapDataWasNotAvailableAndIHadToWait,
-        m.totalMapTilesCollected,
-        m.tilesExplored,
-        m.secondsSpentWaitingForMapDataToComeIn,
-        m.secondsFromReceivingJobToHavingSentBeautifiedPaths,
-        m.secondsWaitingForInitialJobAndMapDataToComeIn,
-        m.numberOfTimesNewMapDataWasRequested,
-        m.secondsFromReceivingJobToHavingSentInitialPaths,
-        m.solvingBeautifiedPathAfterReceivingBeautificationJob,
-        m.waitingForBeautificationJobAfterSolvingInitial,
-        m.rawComputationSeconds_Initial,
-        m.rawComputationSeconds_Beautify,
-    )
-end
 
-
-struct BenchmarkData_WorkerCore
-    workerId::Int # WorkerId is workerRank - 1
-    numberOfOccasionsMapDataWasNotAvailableAndIHadToWait::Int
-
-    totalMapTilesCollected::Int
-    tilesExplored::Int
-
-    secondsSpentWaitingForMapDataToComeIn::Float64
-    secondsFromReceivingJobToHavingSentBeautifiedPaths::Float64
-
-    secondsWaitingForInitialJobAndMapDataToComeIn::Float64
-    numberOfTimesNewMapDataWasRequested::Int
-
-    secondsFromReceivingJobToHavingSentInitialPaths::Float64
-    solvingBeautifiedPathAfterReceivingBeautificationJob::Float64
-
-    waitingForBeautificationJobAfterSolvingInitial::Float64
-    rawComputationSeconds_Initial::Float64
-    rawComputationSeconds_Beautify::Float64
-end
 
 
 
@@ -199,30 +160,50 @@ end
 
 
 
+mutable struct BestWorstAverage
+    bestVal
+    bestId
+
+    worstVal
+    worstId
+
+    averageVal
+
+    function BestWorstAverage(bestVal, bestId, worstVal, worstId, averageVal)
+        new(bestVal, bestId, worstVal, worstId, averageVal)
+    end
+
+
+    function BestWorstAverage(vecOfValuesAndWorkerIdTuples)
+        all = [(v[1], v[2]) for v in vecOfValuesAndWorkerIdTuples]
+        worst = maximum(all)
+        worstVal = worst[1]
+        worstId = worst[2]
+
+        best = minimum(all)
+        bestVal = best[1]
+        bestId = best[2]
+
+        averageVal = mean(a[1] for a in all)
+        new(bestVal, bestId, worstVal, worstId, averageVal)
+    end
+end
+
+function BWA_Average(BWAs::Vector{BestWorstAverage})
+    avg_averageVal = mean([b.averageVal for b in BWAs])
+    avg_worstVal = mean([b.worstVal for b in BWAs])
+    avg_worstId = round(Int, mean([b.worstId for b in BWAs]))
+
+    avg_bestVal = mean([b.bestVal for b in BWAs])
+    avg_bestId = round(Int, mean([b.bestId for b in BWAs]))
+
+    BestWorstAverage(avg_bestVal, avg_bestId, avg_worstVal, avg_worstId, avg_averageVal)
+end
 
 
 
 
 
-
-# function OPT1_WorstWorkerBenchmarkData(datas::Vector{BenchmarkData_WorkerCore})
-#     if length(datas) == 1
-#         return datas[1]
-#     end
-#     worstBenchmark = mBenchmarkData_WorkerCore(-99)
-
-#     error("Unfinished func")
-# end
-
-# function OPT1_AverageWorkerBenchmarkData(datas::Vector{BenchmarkData_WorkerCore})::BenchmarkData_WorkerCore
-#     if length(datas) == 1
-#         return datas[1]
-#     end
-
-#     averageBenchmark = mBenchmarkData_WorkerCore(-99)
-
-#     error("Unfinished func")
-# end
 
 
 function OPT1_AverageMasterBenchmarkData(datas::Vector{BenchmarkData_MasterCore})
@@ -252,7 +233,7 @@ end
 
 
 # the \ skips cancels a newline in the string
-function OPT1_GenerateWorkerReport(workerData::mBenchmarkData_WorkerCore)::String
+function OPT1_GenerateWorkerReport(workerData::BenchmarkData_WorkerCore)::String
     report::String = "
         +++WORKER REPORT FOR WORKER $(workerData.workerId)+++
 
@@ -267,6 +248,7 @@ end
 struct OPT1_BenchmarkingReportStruct
     mapName
     workerCount
+
     totalMapSize
     equivalentWidthHeight
 
@@ -276,60 +258,36 @@ struct OPT1_BenchmarkingReportStruct
     firstWorkerIdToCompleteSecondInitialPath
     lastWorkerIdToCompleteSecondInitialPath
 
-    worst_numberOfTimesNewMapDataWasRequested
-    best_numberOfTimesNewMapDataWasRequested
-    average_numberOfTimesNewMapDataWasRequested
+    numberOfTimesNewMapDataWasRequested_BWA
+    numberOfOccasionsMapDataWasNotAvailableAndIHadToWait_BWA
 
-    worst_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait
-    best_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait
-    average_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait
+    secondsSpentWaitingForMapDataToComeIn_BWA
+    secondsFromReceivingJobToHavingSentInitialPaths_BWA
 
-    worst_secondsSpentWaitingForMapDataToComeIn
-    best_secondsSpentWaitingForMapDataToComeIn
-    average_secondsSpentWaitingForMapDataToComeIn
+    secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA
+    solvingBeautifiedPathAfterReceivingBeautificationJob_BWA
 
-    worst_secondsFromReceivingJobToHavingSentInitialPaths
-    best_secondsFromReceivingJobToHavingSentInitialPaths
-    average_secondsFromReceivingJobToHavingSentInitialPaths
-
-    worst_secondsFromReceivingJobToHavingSentBeautifiedPaths
-    best_secondsFromReceivingJobToHavingSentBeautifiedPaths
-    average_secondsFromReceivingJobToHavingSentBeautifiedPaths
-
-    worst_solvingBeautifiedPathAfterReceivingBeautificationJob
-    best_solvingBeautifiedPathAfterReceivingBeautificationJob
-    average_solvingBeautifiedPathAfterReceivingBeautificationJob
-
-    worst_waitingForBeautificationJobAfterSolvingInitial
-    best_waitingForBeautificationJobAfterSolvingInitial
-    average_waitingForBeautificationJobAfterSolvingInitial
-
+    waitingForBeautificationJobAfterSolvingInitial_BWA
     initialMapDeliverySize
+
     timesAMapSupplementWasRequested
     finalLevel
+
     finalSize
-
     secondsForOfflinePreludeBeforeSendingInitialJobs
+
     secondsToSendInitialPathsAndJobsToAllWorkers
-
     secondsFromStartToHavingReceivedAllInitialPaths
+
     secondsFromStartToHavingReceivedAllBeautifiedPaths
+    rawComputationSeconds_Initial_BWA
 
-    worst_rawComputationSeconds_Initial
-    best_rawComputationSeconds_Initial
-    average_rawComputationSeconds_Initial
-
-    worst_rawComputationSeconds_Beautify
-    best_rawComputationSeconds_Beautify
-    average_rawComputationSeconds_Beautify
-
+    rawComputationSeconds_Beautify_BWA
     st_cost
+
     st_seconds
 end
 
-
-
-# Proompted with deepseek. I'm tired of doing these conversions
 function OPT1_AverageBenchmarkingReportStructs(reportStructs::Vector{OPT1_BenchmarkingReportStruct})::OPT1_BenchmarkingReportStruct
     n = length(reportStructs)
     if n == 0
@@ -341,101 +299,46 @@ function OPT1_AverageBenchmarkingReportStructs(reportStructs::Vector{OPT1_Benchm
     return OPT1_BenchmarkingReportStruct(
         first.mapName,
         first.workerCount,
+        #
         first.totalMapSize,
         first.equivalentWidthHeight,
-
-        # Simple numeric fields
+        #
         round(Int, mean(r.initialPathCost for r in reportStructs)),
         round(Int, mean(r.beautifiedPathCost for r in reportStructs)),
         round(Int, mean(r.firstWorkerIdToCompleteSecondInitialPath for r in reportStructs)),
         round(Int, mean(r.lastWorkerIdToCompleteSecondInitialPath for r in reportStructs)),
         #
-        # Tuple fields - average both the value and the workerId
-        (round(Int, mean(r.worst_numberOfTimesNewMapDataWasRequested[1] for r in reportStructs)),
-            round(Int, mean(r.worst_numberOfTimesNewMapDataWasRequested[2] for r in reportStructs))),
+        BWA_Average([r.numberOfTimesNewMapDataWasRequested_BWA for r in reportStructs]),
+        BWA_Average([r.numberOfOccasionsMapDataWasNotAvailableAndIHadToWait_BWA for r in reportStructs]),
         #
-        (round(Int, mean(r.best_numberOfTimesNewMapDataWasRequested[1] for r in reportStructs)),
-            round(Int, mean(r.best_numberOfTimesNewMapDataWasRequested[2] for r in reportStructs))),
+        BWA_Average([r.secondsSpentWaitingForMapDataToComeIn_BWA for r in reportStructs]),
+        BWA_Average([r.secondsFromReceivingJobToHavingSentInitialPaths_BWA for r in reportStructs]),
         #
-        mean(r.average_numberOfTimesNewMapDataWasRequested for r in reportStructs),
+        BWA_Average([r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA for r in reportStructs]),
+        BWA_Average([r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA for r in reportStructs]),
         #
-        (round(Int, mean(r.worst_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait[1] for r in reportStructs)),
-            round(Int, mean(r.worst_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait[2] for r in reportStructs))),
-        #
-        (round(Int, mean(r.best_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait[1] for r in reportStructs)),
-            round(Int, mean(r.best_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait[2] for r in reportStructs))),
-        #
-        mean(r.average_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait for r in reportStructs),
-        #
-        (mean(r.worst_secondsSpentWaitingForMapDataToComeIn[1] for r in reportStructs),
-            round(Int, mean(r.worst_secondsSpentWaitingForMapDataToComeIn[2] for r in reportStructs))),
-        #
-        (mean(r.best_secondsSpentWaitingForMapDataToComeIn[1] for r in reportStructs),
-            round(Int, mean(r.best_secondsSpentWaitingForMapDataToComeIn[2] for r in reportStructs))),
-        #
-        mean(r.average_secondsSpentWaitingForMapDataToComeIn for r in reportStructs),
-        #
-        (mean(r.worst_secondsFromReceivingJobToHavingSentInitialPaths[1] for r in reportStructs),
-            round(Int, mean(r.worst_secondsFromReceivingJobToHavingSentInitialPaths[2] for r in reportStructs))),
-        #
-        (mean(r.best_secondsFromReceivingJobToHavingSentInitialPaths[1] for r in reportStructs),
-            round(Int, mean(r.best_secondsFromReceivingJobToHavingSentInitialPaths[2] for r in reportStructs))),
-        #
-        mean(r.average_secondsFromReceivingJobToHavingSentInitialPaths for r in reportStructs),
-        #
-        (mean(r.worst_secondsFromReceivingJobToHavingSentBeautifiedPaths[1] for r in reportStructs),
-            round(Int, mean(r.worst_secondsFromReceivingJobToHavingSentBeautifiedPaths[2] for r in reportStructs))),
-        #
-        (mean(r.best_secondsFromReceivingJobToHavingSentBeautifiedPaths[1] for r in reportStructs),
-            round(Int, mean(r.best_secondsFromReceivingJobToHavingSentBeautifiedPaths[2] for r in reportStructs))),
-        #
-        mean(r.average_secondsFromReceivingJobToHavingSentBeautifiedPaths for r in reportStructs),
-        #
-        (mean(r.worst_solvingBeautifiedPathAfterReceivingBeautificationJob[1] for r in reportStructs),
-            round(Int, mean(r.worst_solvingBeautifiedPathAfterReceivingBeautificationJob[2] for r in reportStructs))),
-        #
-        (mean(r.best_solvingBeautifiedPathAfterReceivingBeautificationJob[1] for r in reportStructs),
-            round(Int, mean(r.best_solvingBeautifiedPathAfterReceivingBeautificationJob[2] for r in reportStructs))),
-        #
-        mean(r.average_solvingBeautifiedPathAfterReceivingBeautificationJob for r in reportStructs),
-        #
-        (mean(r.worst_waitingForBeautificationJobAfterSolvingInitial[1] for r in reportStructs),
-            round(Int, mean(r.worst_waitingForBeautificationJobAfterSolvingInitial[2] for r in reportStructs))),
-        #
-        (mean(r.best_waitingForBeautificationJobAfterSolvingInitial[1] for r in reportStructs),
-            round(Int, mean(r.best_waitingForBeautificationJobAfterSolvingInitial[2] for r in reportStructs))),
-        #
-        mean(r.average_waitingForBeautificationJobAfterSolvingInitial for r in reportStructs),
-        #
+        BWA_Average([r.waitingForBeautificationJobAfterSolvingInitial_BWA for r in reportStructs]),
         round(Int, mean(r.initialMapDeliverySize for r in reportStructs)),
+        #
         round(Int, mean(r.timesAMapSupplementWasRequested for r in reportStructs)),
         round(Int, mean(r.finalLevel for r in reportStructs)),
+        #
         round(Int, mean(r.finalSize for r in reportStructs)),
         mean(r.secondsForOfflinePreludeBeforeSendingInitialJobs for r in reportStructs),
+        #
         mean(r.secondsToSendInitialPathsAndJobsToAllWorkers for r in reportStructs),
         mean(r.secondsFromStartToHavingReceivedAllInitialPaths for r in reportStructs),
+        #
         mean(r.secondsFromStartToHavingReceivedAllBeautifiedPaths for r in reportStructs),
+        BWA_Average([r.rawComputationSeconds_Initial_BWA for r in reportStructs]),
         #
-        (mean(r.worst_rawComputationSeconds_Initial[1] for r in reportStructs),
-            round(Int, mean(r.worst_rawComputationSeconds_Initial[2] for r in reportStructs))),
-        #
-        (mean(r.best_rawComputationSeconds_Initial[1] for r in reportStructs),
-            round(Int, mean(r.best_rawComputationSeconds_Initial[2] for r in reportStructs))),
-        #
-        mean(r.average_rawComputationSeconds_Initial for r in reportStructs),
-        #
-        (mean(r.worst_rawComputationSeconds_Beautify[1] for r in reportStructs),
-            round(Int, mean(r.worst_rawComputationSeconds_Beautify[2] for r in reportStructs))),
-        #
-        (mean(r.best_rawComputationSeconds_Beautify[1] for r in reportStructs),
-            round(Int, mean(r.best_rawComputationSeconds_Beautify[2] for r in reportStructs))),
-        #
-        mean(r.average_rawComputationSeconds_Beautify for r in reportStructs),
-        #
+        BWA_Average([r.rawComputationSeconds_Beautify_BWA for r in reportStructs]),
         mean(r.st_cost for r in reportStructs),
+        #
         mean(r.st_seconds for r in reportStructs)
     )
 end
+
 
 
 function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct)::String
@@ -463,46 +366,46 @@ function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct):
         Last worker to complete the second initial path: $(r.lastWorkerIdToCompleteSecondInitialPath)
 
         | Occasions that new map data was requested
-        Unlucky worker $(r.worst_numberOfTimesNewMapDataWasRequested[2]) had to request new map data $(r.worst_numberOfTimesNewMapDataWasRequested[1]) times
-        Lucky worker $(r.best_numberOfTimesNewMapDataWasRequested[2]) had to request new map data $(r.best_numberOfTimesNewMapDataWasRequested[1]) times
-        On average a worker had to request new map data $(r.average_numberOfTimesNewMapDataWasRequested) times
+        Unlucky worker $(r.numberOfTimesNewMapDataWasRequested_BWA.worstId) had to request new map data $(r.numberOfTimesNewMapDataWasRequested_BWA.worstVal) times
+        Lucky worker $(r.numberOfTimesNewMapDataWasRequested_BWA.bestId) had to request new map data $(r.numberOfTimesNewMapDataWasRequested_BWA.bestVal) times
+        On average a worker had to request new map data $(r.numberOfTimesNewMapDataWasRequested_BWA.averageVal) times
 
         | Occasions having to wait for for new map data to come in
-        Unlucky Worker $(r.worst_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait[2]) had to wait $(r.worst_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait[1]) times when data was not available after request
-        Lucky worker $(r.best_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait[2]) had to wait $(r.best_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait[1]) times when data was not available after request
-        On average a worker had to wait $(r.average_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait) times when data was not available after request
+        Unlucky Worker $(r.numberOfOccasionsMapDataWasNotAvailableAndIHadToWait_BWA.worstId) had to wait $(r.numberOfOccasionsMapDataWasNotAvailableAndIHadToWait_BWA.worstVal) times when data was not available after request
+        Lucky worker $(r.numberOfOccasionsMapDataWasNotAvailableAndIHadToWait_BWA.bestId) had to wait $(r.numberOfOccasionsMapDataWasNotAvailableAndIHadToWait_BWA.bestVal) times when data was not available after request
+        On average a worker had to wait $(r.numberOfOccasionsMapDataWasNotAvailableAndIHadToWait_BWA.averageVal) times when data was not available after request
 
         | Seconds spent idle waiting for map data to come in, vs doing actual work
-        Unlucky Worker $(r.worst_secondsSpentWaitingForMapDataToComeIn[2]) had to wait $(r.worst_secondsSpentWaitingForMapDataToComeIn[1]) seconds for map data to come in
-        Lucky Worker $(r.best_secondsSpentWaitingForMapDataToComeIn[2]) had to wait $(r.best_secondsSpentWaitingForMapDataToComeIn[1]) seconds for map data to come in
-        On average a worker had to wait for $(r.average_secondsSpentWaitingForMapDataToComeIn) seconds for map data to come in
+        Unlucky Worker $(r.secondsSpentWaitingForMapDataToComeIn_BWA.worstId) had to wait $(r.secondsSpentWaitingForMapDataToComeIn_BWA.worstVal) seconds for map data to come in
+        Lucky Worker $(r.secondsSpentWaitingForMapDataToComeIn_BWA.bestId) had to wait $(r.secondsSpentWaitingForMapDataToComeIn_BWA.bestVal) seconds for map data to come in
+        On average a worker had to wait for $(r.secondsSpentWaitingForMapDataToComeIn_BWA.averageVal) seconds for map data to come in
 
-        Unlucky worker $(r.worst_rawComputationSeconds_Initial[2]) spent $(r.worst_rawComputationSeconds_Initial[1]) seconds of raw computation time on the Initial pathfinding
-        Lucky worker $(r.best_rawComputationSeconds_Initial[2]) spent $(r.best_rawComputationSeconds_Initial[1]) seconds of raw computation time on the Initial pathfinding
-        On average, a worker spent $(r.average_rawComputationSeconds_Initial) seconds of raw computation time on Initial pathfindign
+        Unlucky worker $(r.rawComputationSeconds_Initial_BWA.worstId) spent $(r.rawComputationSeconds_Initial_BWA.worstVal) seconds of raw computation time on the Initial pathfinding
+        Lucky worker $(r.rawComputationSeconds_Initial_BWA.bestId) spent $(r.rawComputationSeconds_Initial_BWA.bestVal) seconds of raw computation time on the Initial pathfinding
+        On average, a worker spent $(r.rawComputationSeconds_Initial_BWA.averageVal) seconds of raw computation time on Initial pathfindign
 
-        Unlucky worker $(r.worst_rawComputationSeconds_Beautify[2]) spent $(r.worst_rawComputationSeconds_Beautify[1]) seconds of raw computation time on the Beautify pathfinding
-        Lucky worker $(r.best_rawComputationSeconds_Beautify[2]) spent $(r.best_rawComputationSeconds_Beautify[1]) seconds of raw computation time on the Beautify pathfinding
-        On average, a worker spent $(r.average_rawComputationSeconds_Beautify) seconds of raw computation time on beautify pathfindign
+        Unlucky worker $(r.rawComputationSeconds_Beautify_BWA.worstId) spent $(r.rawComputationSeconds_Beautify_BWA.worstVal) seconds of raw computation time on the Beautify pathfinding
+        Lucky worker $(r.rawComputationSeconds_Beautify_BWA.bestId) spent $(r.rawComputationSeconds_Beautify_BWA.bestVal) seconds of raw computation time on the Beautify pathfinding
+        On average, a worker spent $(r.rawComputationSeconds_Beautify_BWA.averageVal) seconds of raw computation time on beautify pathfindign
 
 
         | Worker job completion: Initial paths
-        Unlucky worker $(r.worst_secondsFromReceivingJobToHavingSentInitialPaths[2]) took $(r.worst_secondsFromReceivingJobToHavingSentInitialPaths[1]) seconds to solve initial path after receiving job
-        Lucky worker $(r.best_secondsFromReceivingJobToHavingSentInitialPaths[2]) took $(r.best_secondsFromReceivingJobToHavingSentInitialPaths[1]) seconds to solve initial path after receiving job
-        On average a worker spent $(r.average_secondsFromReceivingJobToHavingSentInitialPaths) seconds to solve the initial path after receiving job 
+        Unlucky worker $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.worstId) took $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.worstVal) seconds to solve initial path after receiving job
+        Lucky worker $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.bestId) took $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.bestVal) seconds to solve initial path after receiving job
+        On average a worker spent $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.averageVal) seconds to solve the initial path after receiving job 
 
         | Worker job completion: Beautified paths
-        Unlucky worker $(r.worst_secondsFromReceivingJobToHavingSentBeautifiedPaths[2]) took $(r.worst_secondsFromReceivingJobToHavingSentBeautifiedPaths[1]) seconds to solve Beautified path after receiving initial job
-        Lucky worker $(r.best_secondsFromReceivingJobToHavingSentBeautifiedPaths[2]) took $(r.best_secondsFromReceivingJobToHavingSentBeautifiedPaths[1]) seconds to solve Beautified path after receiving initial job
-        On average a worker spent $(r.average_secondsFromReceivingJobToHavingSentBeautifiedPaths) seconds to solve the Beautified path after receiving initial job 
+        Unlucky worker $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.worstId) took $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.worstVal) seconds to solve Beautified path after receiving initial job
+        Lucky worker $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.bestId) took $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.bestVal) seconds to solve Beautified path after receiving initial job
+        On average a worker spent $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.averageVal) seconds to solve the Beautified path after receiving initial job 
 
-        Unlucky worker $(r.worst_solvingBeautifiedPathAfterReceivingBeautificationJob[2]) took $(r.worst_solvingBeautifiedPathAfterReceivingBeautificationJob[1]) seconds to solve beautified path after receiving beautification job
-        Lucky worker $(r.best_solvingBeautifiedPathAfterReceivingBeautificationJob[2]) took $(r.best_solvingBeautifiedPathAfterReceivingBeautificationJob[1]) seconds to solve beautified path after receiving beautification job
-        On average, a worker spent $(r.average_solvingBeautifiedPathAfterReceivingBeautificationJob) seconds to solve the beautification path after receiving the beautification job
+        Unlucky worker $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.worstId) took $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.worstVal) seconds to solve beautified path after receiving beautification job
+        Lucky worker $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.bestId) took $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.bestVal) seconds to solve beautified path after receiving beautification job
+        On average, a worker spent $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.averageVal) seconds to solve the beautification path after receiving the beautification job
 
-        Unlucky worker $(r.worst_waitingForBeautificationJobAfterSolvingInitial[2]) spent $(r.worst_waitingForBeautificationJobAfterSolvingInitial[1]) seconds waiting for beautification job after solving initial
-        Lucky worker $(r.best_waitingForBeautificationJobAfterSolvingInitial[2]) spent $(r.best_waitingForBeautificationJobAfterSolvingInitial[1]) seconds waiting for beautification job after solving initial
-        On average, a worker spent $(r.average_waitingForBeautificationJobAfterSolvingInitial) seconds waiting for beautification job after solving initial
+        Unlucky worker $(r.waitingForBeautificationJobAfterSolvingInitial_BWA.worstId) spent $(r.waitingForBeautificationJobAfterSolvingInitial_BWA.worstVal) seconds waiting for beautification job after solving initial
+        Lucky worker $(r.waitingForBeautificationJobAfterSolvingInitial_BWA.bestId) spent $(r.waitingForBeautificationJobAfterSolvingInitial_BWA.bestVal) seconds waiting for beautification job after solving initial
+        On average, a worker spent $(r.waitingForBeautificationJobAfterSolvingInitial_BWA.averageVal) seconds waiting for beautification job after solving initial
 
 
 
@@ -522,114 +425,89 @@ end
 
 
 
+
+
 function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, workerDatas::Vector{BenchmarkData_WorkerCore}, stCost, stSeconds)::OPT1_BenchmarkingReportStruct
-    # TODO: Along with the string, return a struct that has the comprehensive data, so that the comprehensive data can be averaged,
-    # including the worker data of multiple runs. Everything I print here, also store it in a struct.
-    # Basically, make a maze solve return exactly one benchmark report, which also contains information
-    # about the workers.
     m::BenchmarkData_MasterCore = masterData
     equivalentWidthHeight::Int = Int(sqrt(m.totalMapSize))
 
-    all_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait = [(w.numberOfOccasionsMapDataWasNotAvailableAndIHadToWait, w.workerId) for w in workerDatas]
-    worst_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait = maximum(all_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait)
-    best_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait = minimum(all_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait)
-    average_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait = mean(t[1] for t in all_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait)
+    # Create tuples for each metric
+    occasionsTuples = [(w.numberOfOccasionsMapDataWasNotAvailableAndIHadToWait, w.workerId) for w in workerDatas]
+    occasions_BWA = BestWorstAverage(occasionsTuples)
 
-    all_numberOfTimesNewMapDataWasRequested = [(w.numberOfTimesNewMapDataWasRequested, w.workerId) for w in workerDatas]
-    worst_numberOfTimesNewMapDataWasRequested = maximum(all_numberOfTimesNewMapDataWasRequested)
-    best_numberOfTimesNewMapDataWasRequested = minimum(all_numberOfTimesNewMapDataWasRequested)
-    average_numberOfTimesNewMapDataWasRequested = mean(t[1] for t in all_numberOfTimesNewMapDataWasRequested)
+    requestsTuples = [(w.numberOfTimesNewMapDataWasRequested, w.workerId) for w in workerDatas]
+    requests_BWA = BestWorstAverage(requestsTuples)
 
-    all_secondsSpentWaitingForMapDataToComeIn = [(w.secondsSpentWaitingForMapDataToComeIn, w.workerId) for w in workerDatas]
-    worst_secondsSpentWaitingForMapDataToComeIn = maximum(all_secondsSpentWaitingForMapDataToComeIn)
-    best_secondsSpentWaitingForMapDataToComeIn = minimum(all_secondsSpentWaitingForMapDataToComeIn)
-    average_secondsSpentWaitingForMapDataToComeIn = mean(t[1] for t in all_secondsSpentWaitingForMapDataToComeIn)
+    waitingTuples = [(w.secondsSpentWaitingForMapDataToComeIn, w.workerId) for w in workerDatas]
+    waiting_BWA = BestWorstAverage(waitingTuples)
 
-    all_secondsFromReceivingJobToHavingSentInitialPaths = [(w.secondsFromReceivingJobToHavingSentInitialPaths, w.workerId) for w in workerDatas]
-    worst_secondsFromReceivingJobToHavingSentInitialPaths = maximum(all_secondsFromReceivingJobToHavingSentInitialPaths)
-    best_secondsFromReceivingJobToHavingSentInitialPaths = minimum(all_secondsFromReceivingJobToHavingSentInitialPaths)
-    average_secondsFromReceivingJobToHavingSentInitialPaths = mean(t[1] for t in all_secondsFromReceivingJobToHavingSentInitialPaths)
+    initialJobTuples = [(w.secondsFromReceivingJobToHavingSentInitialPaths, w.workerId) for w in workerDatas]
+    initialJob_BWA = BestWorstAverage(initialJobTuples)
 
-    all_secondsFromReceivingJobToHavingSentBeautifiedPaths = [(w.secondsFromReceivingJobToHavingSentBeautifiedPaths, w.workerId) for w in workerDatas]
-    worst_secondsFromReceivingJobToHavingSentBeautifiedPaths = maximum(all_secondsFromReceivingJobToHavingSentBeautifiedPaths)
-    best_secondsFromReceivingJobToHavingSentBeautifiedPaths = minimum(all_secondsFromReceivingJobToHavingSentBeautifiedPaths)
-    average_secondsFromReceivingJobToHavingSentBeautifiedPaths = mean(t[1] for t in all_secondsFromReceivingJobToHavingSentBeautifiedPaths)
+    beautifiedJobTuples = [(w.secondsFromReceivingJobToHavingSentBeautifiedPaths, w.workerId) for w in workerDatas]
+    beautifiedJob_BWA = BestWorstAverage(beautifiedJobTuples)
 
-    all_solvingBeautifiedPathAfterReceivingBeautificationJob = [(w.solvingBeautifiedPathAfterReceivingBeautificationJob, w.workerId) for w in workerDatas]
-    worst_solvingBeautifiedPathAfterReceivingBeautificationJob = maximum(all_solvingBeautifiedPathAfterReceivingBeautificationJob)
-    best_solvingBeautifiedPathAfterReceivingBeautificationJob = minimum(all_solvingBeautifiedPathAfterReceivingBeautificationJob)
-    average_solvingBeautifiedPathAfterReceivingBeautificationJob = mean(t[1] for t in all_solvingBeautifiedPathAfterReceivingBeautificationJob)
+    solvingBeautifyTuples = [(w.solvingBeautifiedPathAfterReceivingBeautificationJob, w.workerId) for w in workerDatas]
+    solvingBeautify_BWA = BestWorstAverage(solvingBeautifyTuples)
 
-    all_waitingForBeautificationJobAfterSolvingInitial = [(w.waitingForBeautificationJobAfterSolvingInitial, w.workerId) for w in workerDatas]
-    worst_waitingForBeautificationJobAfterSolvingInitial = maximum(all_waitingForBeautificationJobAfterSolvingInitial)
-    best_waitingForBeautificationJobAfterSolvingInitial = minimum(all_waitingForBeautificationJobAfterSolvingInitial)
-    average_waitingForBeautificationJobAfterSolvingInitial = mean(t[1] for t in all_waitingForBeautificationJobAfterSolvingInitial)
+    waitingBeautifyTuples = [(w.waitingForBeautificationJobAfterSolvingInitial, w.workerId) for w in workerDatas]
+    waitingBeautify_BWA = BestWorstAverage(waitingBeautifyTuples)
 
-    all_rawComputationseconds_Initial = [(w.rawComputationSeconds_Initial, w.workerId) for w in workerDatas]
-    worst_rawComputationSeconds_Initial = maximum(all_rawComputationseconds_Initial)
-    best_rawComputationSeconds_Initial = minimum(all_rawComputationseconds_Initial)
-    average_rawComputationSeconds_Initial = mean(t[1] for t in all_rawComputationseconds_Initial)
+    rawInitialTuples = [(w.rawComputationSeconds_Initial, w.workerId) for w in workerDatas]
+    rawInitial_BWA = BestWorstAverage(rawInitialTuples)
 
-    all_rawComputationseconds_Beautify = [(w.rawComputationSeconds_Beautify, w.workerId) for w in workerDatas]
-    worst_rawComputationSeconds_Beautify = maximum(all_rawComputationseconds_Beautify)
-    best_rawComputationSeconds_Beautify = minimum(all_rawComputationseconds_Beautify)
-    average_rawComputationSeconds_Beautify = mean(t[1] for t in all_rawComputationseconds_Beautify)
+    rawBeautifyTuples = [(w.rawComputationSeconds_Beautify, w.workerId) for w in workerDatas]
+    rawBeautify_BWA = BestWorstAverage(rawBeautifyTuples)
 
     reportStruct = OPT1_BenchmarkingReportStruct(
         m.mapName,
         m.workerCount,
+        #
         m.totalMapSize,
         equivalentWidthHeight,
+        #
         m.initialPathCost,
         m.beautifiedPathCost,
+        #
         m.firstWorkerIdToCompleteSecondInitialPath,
         m.lastWorkerIdToCompleteSecondInitialPath,
-        worst_numberOfTimesNewMapDataWasRequested,
-        best_numberOfTimesNewMapDataWasRequested,
-        average_numberOfTimesNewMapDataWasRequested,
-        worst_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait,
-        best_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait,
-        average_numberOfOccasionsMapDataWasNotAvailableAndIHadToWait,
-        worst_secondsSpentWaitingForMapDataToComeIn,
-        best_secondsSpentWaitingForMapDataToComeIn,
-        average_secondsSpentWaitingForMapDataToComeIn,
-        worst_secondsFromReceivingJobToHavingSentInitialPaths,
-        best_secondsFromReceivingJobToHavingSentInitialPaths,
-        average_secondsFromReceivingJobToHavingSentInitialPaths,
-        worst_secondsFromReceivingJobToHavingSentBeautifiedPaths,
-        best_secondsFromReceivingJobToHavingSentBeautifiedPaths,
-        average_secondsFromReceivingJobToHavingSentBeautifiedPaths,
-        worst_solvingBeautifiedPathAfterReceivingBeautificationJob,
-        best_solvingBeautifiedPathAfterReceivingBeautificationJob,
-        average_solvingBeautifiedPathAfterReceivingBeautificationJob,
-        worst_waitingForBeautificationJobAfterSolvingInitial,
-        best_waitingForBeautificationJobAfterSolvingInitial,
-        average_waitingForBeautificationJobAfterSolvingInitial,
+        #
+        requests_BWA,
+        occasions_BWA,
+        #
+        waiting_BWA,
+        initialJob_BWA,
+        #
+        beautifiedJob_BWA,
+        solvingBeautify_BWA,
+        #
+        waitingBeautify_BWA,
         m.initialMapDeliverySize,
+        #
         m.timesAMapSupplementWasRequested,
         m.finalLevel,
+        #
         m.finalSize,
         m.secondsForOfflinePreludeBeforeSendingInitialJobs,
+        #
         m.secondsToSendInitialPathsAndJobsToAllWorkers,
         m.secondsFromStartToHavingReceivedAllInitialPaths,
+        #
         m.secondsFromStartToHavingReceivedAllBeautifiedPaths,
-        worst_rawComputationSeconds_Initial,
-        best_rawComputationSeconds_Initial,
-        average_rawComputationSeconds_Initial,
-        worst_rawComputationSeconds_Beautify,
-        best_rawComputationSeconds_Beautify,
-        average_rawComputationSeconds_Beautify,
+        rawInitial_BWA,
+        #
+        rawBeautify_BWA,
         stCost,
+        #
         stSeconds,
     )
-
 
     return reportStruct
 end
 
-function GenerateBenchmarkReport_SingleThreaded
 
-end
+
+
 
 
 

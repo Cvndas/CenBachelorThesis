@@ -120,7 +120,7 @@ const OPT1_BEAUTIFICATION_JOB_REQUEST = 7
 
 const OPT1_WORKER_BENCHMARK_REQUEST = 8
 const OPT1_WORKER_BENCHMARK_RESPONSE = 9
-
+const OPT1_WORKER_BENCHMARK_RESPONSE_MUTABLE = 10
 
 # // ::: -------------------------:: Structs ::------------------------- ::: // 
 #
@@ -248,7 +248,7 @@ mutable struct WorkerState
     jobBState::WorkerPathfindingState
 
     beautyJobState::Union{WorkerPathfindingState,Nothing}
-    benchmarkData_Worker::mBenchmarkData_WorkerCore
+    benchmarkData_Worker::BenchmarkData_WorkerCore
 
     # This holds iSend requests, so they aren't garbage collected until the full operation is done
     iSendRequests::Vector{MPI.Request}
@@ -488,6 +488,7 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore)
 
     # mazeSizes = [20, 100, 200, 500, 1000]
     # mazeSizes = [20, 100]
+    # mazeSizes = [20]
     mazeSizes = [500]
     for mazeSizeUniversal in mazeSizes
         mazeSizeX = mazeSizeUniversal
@@ -581,7 +582,6 @@ function OPT1_Entry(comm, nranks, rank, masterCore, handcraftedTestMap::Bool, ma
 end
 
 
-singleThreadedSolveDict::Dict{Tuple{Int32,Int32},Tuple{Float64,Int}} = Dict()
 
 function OPT1_MasterCore(comm, nranks, rank, masterCore, computedMaze::ComputedMaze, mapName::String)
     T_startTime = time()
@@ -667,8 +667,7 @@ function OPT1_MasterCore(comm, nranks, rank, masterCore, computedMaze::ComputedM
         MPI.Probe(comm, MPI.Status, source=MPI.ANY_SOURCE, tag=OPT1_WORKER_BENCHMARK_RESPONSE)
         workerBenchmarkingBuffer_ref = Ref{BenchmarkData_WorkerCore}()
 
-        MPI.Irecv!(workerBenchmarkingBuffer_ref, s.comm; source=MPI.ANY_SOURCE, tag=OPT1_WORKER_BENCHMARK_RESPONSE)
-        workerBenchmarkingEntry::BenchmarkData_WorkerCore = workerBenchmarkingBuffer_ref[]
+        workerBenchmarkingEntry = MPI.recv(s.comm, source=MPI.ANY_SOURCE, tag=OPT1_WORKER_BENCHMARK_RESPONSE)
         push!(workerBenchmarkDatas, workerBenchmarkingEntry)
     end
 
@@ -677,18 +676,10 @@ function OPT1_MasterCore(comm, nranks, rank, masterCore, computedMaze::ComputedM
     s.benchmarkData_Master.finalSize = s.horizontalExtensionSize * s.verticalEstimationSize
 
     # Limitation here is that maxX and maxY have to be different from previous mazes for this to be correct
-    stCacheKey = (s.maxX, s.maxY)
-    if haskey(singleThreadedSolveDict, stCacheKey)
-        stSeconds = singleThreadedSolveDict[stCacheKey][1]
-        stCost = singleThreadedSolveDict[stCacheKey][2]
-        # println("The single threaded solve for a maze of $(s.maxX), $(s.maxY) was already cached")
-    else
-        stSeconds = @elapsed stSolution = st_AStar(s.computedMaze.startTile, s.computedMaze.endTile, s.computedMaze.allTiles)
-        stCost = ComputePathCost(stSolution)
-        singleThreadedSolveDict[stCacheKey] = (stSeconds, stCost)
-        # println("The single threaded solve for a maze of $(s.maxX), $(s.maxY) was freshly computed")
+    stSeconds = @elapsed stSolution = st_AStar(s.computedMaze.startTile, s.computedMaze.endTile, s.computedMaze.allTiles)
+    stCost = ComputePathCost(stSolution)
+    # println("The single threaded solve for a maze of $(s.maxX), $(s.maxY) was freshly computed")
 
-    end
 
 
 
@@ -1024,8 +1015,7 @@ function OPT1_WorkerCore(comm, nranks, rank, masterCore)
     benchmarkingRequestBuffer = Vector{Int64}
     benchmarkingRequestBuffer = MPI.recv(comm; source=masterCore, tag=OPT1_WORKER_BENCHMARK_REQUEST)
 
-    mpiCompatibleBenchmark = mBenchmarkData_WorkerCore_MakeMPICompatbible(w.benchmarkData_Worker)
-    MPI.Send(mpiCompatibleBenchmark, comm; dest=masterCore, tag=OPT1_WORKER_BENCHMARK_RESPONSE)
+    MPI.send(w.benchmarkData_Worker, comm; dest=masterCore, tag=OPT1_WORKER_BENCHMARK_RESPONSE)
 
     for iSendRequest::MPI.Request in w.iSendRequests
         MPI.Wait(iSendRequest)
@@ -1154,7 +1144,7 @@ function OPT1_Worker_ReceiveInitialMapDataAndJobs(comm, rank)::WorkerState
     jobAState::WorkerPathfindingState = WorkerPathfindingState(jobA_startTile, jobA_endTile)
     jobBState::WorkerPathfindingState = WorkerPathfindingState(jobB_startTile, jobB_endTile)
 
-    workerBenchmarking = mBenchmarkData_WorkerCore(
+    workerBenchmarking = BenchmarkData_WorkerCore(
         rank
     )
     w::WorkerState = WorkerState(comm, rank, availableTiles, maxX, maxY, jobAState, jobBState, nothing, workerBenchmarking, Vector{MPI.Request}())
