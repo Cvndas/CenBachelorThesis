@@ -486,8 +486,9 @@ end
 
 function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore)
 
-    mazeSizes = [20, 100, 200, 500, 1000]
+    # mazeSizes = [20, 100, 200, 500, 1000]
     # mazeSizes = [20, 100]
+    mazeSizes = [500]
     for mazeSizeUniversal in mazeSizes
         mazeSizeX = mazeSizeUniversal
         mazeSizeY = mazeSizeUniversal
@@ -710,6 +711,8 @@ end
 
 
 function OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMaze, mapName::String)
+    # verticalEstimationSize_Default::Int32 = 99999999
+    # horizontalExtensionSize_Default::Int32 = 99999999
     verticalEstimationSize_Default::Int32 = 64
     horizontalExtensionSize_Default::Int32 = 64
     currentLevel = 1

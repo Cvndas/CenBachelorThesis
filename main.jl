@@ -1,4 +1,3 @@
-# module Cen
 include("CenAstar.jl")
 using .CenAstar
 using MPI
@@ -9,6 +8,18 @@ Cen.Clear()
 function Clear()
     print("\33[2J\33[H")
 end
+
+#=
+TODO very crucial:
+For randomly generated maps, when placing waypoints, make sure they are not placed on walls ,as
+in its current state maybe it is going to search for all the nodes that are cheaper than that
+    waypoint sitting on a wall.
+    Shouldn't be too difficult to fix. Just try all the neighbors to put the waypoint on it. If
+    no, add those neighbors to a frontier, try the same thing on that frontier, until one waypoint is
+    found that is not on a wall.
+#=
+=#
+=#
 
 #=
 TODO: 
@@ -53,13 +64,12 @@ function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
     end
 
     # Here, specify what to run
-    run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
+    # run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
     run(`$(mpiexec()) -np 5 julia --project=. -e $code`)
-    run(`$(mpiexec()) -np 9 julia --project=. -e $code`)
-    run(`$(mpiexec()) -np 17 julia --project=. -e $code`)
+    # run(`$(mpiexec()) -np 9 julia --project=. -e $code`)
+    # run(`$(mpiexec()) -np 17 julia --project=. -e $code`)
     # run(`$(mpiexec()) -np 32 julia --project=. -e $code`)
 end
-
 
 #= run in the julia repl with
 include("main.jl"); main_MPI_ParallelHierarchicSearch_ProduceBenchmarkGraphs_RunA();
@@ -69,7 +79,6 @@ function main_MPI_ParallelHierarchicSearch_ProduceBenchmarkGraphs_RunA()
     runAFolder = joinpath("Benchmarks", "RunA")
     CenAstar.OPT1_ProduceBenchmarkGraphs(runAFolder)
 end
-
 
 #= run in the julia repl with
 include("main.jl"); main_MPI_ParallelHierarchicSearch_HandcraftedMaps();
@@ -100,9 +109,6 @@ function main_MPI_ParallelHierarchicSearch_HandcraftedMaps()
     # run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
 end
 
-
-
-
 #= run in the julia repl with
 include("main.jl"); main_MPI_ParallelHierarchicSearch();
 =#
@@ -130,7 +136,6 @@ function main_MPI_ParallelHierarchicSearch()
     # run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
     # run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
 
-
 end
 
 #= run in the julia repl with
@@ -143,9 +148,6 @@ function main_MapBuilder(; mapToEdit::String="")
 
     println("Exiting main()")
 end
-
-
-
 
 #= run with
 include("main.jl"); main_SingleThreadedAStar();
@@ -182,5 +184,3 @@ function main_SingleThreadedAStar()
     println("Done with main().")
 end
 
-#Module Cen End
-# end
