@@ -37,6 +37,7 @@ mutable struct BenchmarkData_WorkerCore
     rawComputationSeconds_Initial::Float64
 
     rawComputationSeconds_Beautify::Float64
+    numberOfBeautificationJobsCompleted::Int
 
 
     function BenchmarkData_WorkerCore(workerRank::Int)::BenchmarkData_WorkerCore
@@ -63,33 +64,7 @@ mutable struct BenchmarkData_WorkerCore
             -0, # Raw computation seconds, initial
             #
             -0, # Raw copmutation seconds, beautify
-        )
-    end
-
-    # This is an empty constructor, intended as a buffer for the master to receive the incoming data over MPI
-    function BenchmarkData_WorkerCore()::BenchmarkData_WorkerCore
-        new(
-            -77,
-            #
-            -77,
-            -77,
-            #
-            -77,
-            -77,
-            #
-            -77,
-            -77,
-            #
-            -77,
-            -77,
-            #
-            -77,
-            -77,
-            #
-            -77,
-            -77,
-            #
-            -77,
+            0,
         )
     end
 end
@@ -286,6 +261,7 @@ struct OPT1_BenchmarkingReportStruct
     st_cost
 
     st_seconds
+    numberOfBeautificationPathsSolved_BWA
 end
 
 function OPT1_AverageBenchmarkingReportStructs(reportStructs::Vector{OPT1_BenchmarkingReportStruct})::OPT1_BenchmarkingReportStruct
@@ -335,7 +311,8 @@ function OPT1_AverageBenchmarkingReportStructs(reportStructs::Vector{OPT1_Benchm
         BWA_Average([r.rawComputationSeconds_Beautify_BWA for r in reportStructs]),
         mean(r.st_cost for r in reportStructs),
         #
-        mean(r.st_seconds for r in reportStructs)
+        mean(r.st_seconds for r in reportStructs),
+        BWA_Average([r.numberOfBeautificationPathsSolved_BWA for r in reportStructs])
     )
 end
 
@@ -384,10 +361,13 @@ function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct):
         Lucky worker $(r.rawComputationSeconds_Initial_BWA.bestId) spent $(r.rawComputationSeconds_Initial_BWA.bestVal) seconds of raw computation time on the Initial pathfinding
         On average, a worker spent $(r.rawComputationSeconds_Initial_BWA.averageVal) seconds of raw computation time on Initial pathfindign
 
-        Unlucky worker $(r.rawComputationSeconds_Beautify_BWA.worstId) spent $(r.rawComputationSeconds_Beautify_BWA.worstVal) seconds of raw computation time on the Beautify pathfinding
-        Lucky worker $(r.rawComputationSeconds_Beautify_BWA.bestId) spent $(r.rawComputationSeconds_Beautify_BWA.bestVal) seconds of raw computation time on the Beautify pathfinding
+        ~Unlucky~ worker $(r.rawComputationSeconds_Beautify_BWA.worstId) spent $(r.rawComputationSeconds_Beautify_BWA.worstVal) seconds of raw computation time on the Beautify pathfinding
+        ~Lucky~ worker $(r.rawComputationSeconds_Beautify_BWA.bestId) spent $(r.rawComputationSeconds_Beautify_BWA.bestVal) seconds of raw computation time on the Beautify pathfinding
         On average, a worker spent $(r.rawComputationSeconds_Beautify_BWA.averageVal) seconds of raw computation time on beautify pathfindign
 
+        ~Unlucky~ worker $(r.numberOfBeautificationPathsSolved_BWA.worstId) solved $(r.numberOfBeautificationPathsSolved_BWA.worstVal) beautification paths
+        ~Lucky~ worker $(r.numberOfBeautificationPathsSolved_BWA.bestId) solved $(r.numberOfBeautificationPathsSolved_BWA.bestVal) beautification paths
+        On average, a worker solved $(r.numberOfBeautificationPathsSolved_BWA.averageVal) beautification paths
 
         | Worker job completion: Initial paths
         Unlucky worker $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.worstId) took $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.worstVal) seconds to solve initial path after receiving job
@@ -459,6 +439,9 @@ function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, work
     rawBeautifyTuples = [(w.rawComputationSeconds_Beautify, w.workerId) for w in workerDatas]
     rawBeautify_BWA = BestWorstAverage(rawBeautifyTuples)
 
+    beautificationPathsSolvedTuples = [(w.numberOfBeautificationJobsCompleted, w.workerId) for w in workerDatas]
+    beautificationPathsSolved_BWA = BestWorstAverage(beautificationPathsSolvedTuples)
+
     reportStruct = OPT1_BenchmarkingReportStruct(
         m.mapName,
         m.workerCount,
@@ -500,6 +483,7 @@ function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, work
         stCost,
         #
         stSeconds,
+        beautificationPathsSolved_BWA
     )
 
     return reportStruct
@@ -549,8 +533,8 @@ function OPT1_CreateGraphAxis(reportStructs::Vector{OPT1_BenchmarkingReportStruc
         ylabel=ylabel,
         title=title,
         xticks=xTicks,
-        yscale=log2,
-        xscale=log2
+        # yscale=log2,
+        # xscale=log2
     )
 end
 
@@ -566,13 +550,13 @@ function OPT1_ProduceGraph_totalTime(reportStructs::Vector{OPT1_BenchmarkingRepo
     sortedReportStruct = sort(reportStructs, by=x -> x.workerCount)
 
     #= 3 lines:
-    1. ST
+    1. ST (which is a single point)
     2. Initial
     3. Beauty
     =#
     # stPoint
     st_Xs = [1]
-    st_Ys = [sortedReportStruct[1].st_seconds]
+    st_Ys = [sortedReportStruct[1].st_seconds] * 1000
 
     sharedXs = []
     initialYs = []
@@ -580,17 +564,19 @@ function OPT1_ProduceGraph_totalTime(reportStructs::Vector{OPT1_BenchmarkingRepo
 
     for reportStruct::OPT1_BenchmarkingReportStruct in sortedReportStruct
         push!(sharedXs, reportStruct.workerCount)
-        push!(initialYs, reportStruct.secondsFromStartToHavingReceivedAllInitialPaths)
-        push!(beautyYs, reportStruct.secondsFromStartToHavingReceivedAllBeautifiedPaths)
+        push!(initialYs, reportStruct.secondsFromStartToHavingReceivedAllInitialPaths * 1000)
+        push!(beautyYs, reportStruct.secondsFromStartToHavingReceivedAllBeautifiedPaths * 1000)
     end
 
     lines!(axis, st_Xs, st_Ys, color=ST_COLOR, label="Single Threaded Seconds")
     scatter!(axis, st_Xs, st_Ys, color=ST_COLOR, markersize=GRAPH_POINT_SIZE)
 
-    lines!(axis, sharedXs, initialYs, color=INITIAL_COLOR, label="Initial path seconds")
+    hlines!(axis, st_Ys[1], color=ST_COLOR, label="Single threaded Seconds")
+
+    lines!(axis, sharedXs, initialYs, color=INITIAL_COLOR, label="Initial path seconds(Miliseconds)")
     scatter!(axis, sharedXs, initialYs, color=INITIAL_COLOR, markersize=GRAPH_POINT_SIZE)
 
-    lines!(axis, sharedXs, beautyYs, color=BEAUTY_COLOR, label="Beautified path seconds")
+    lines!(axis, sharedXs, beautyYs, color=BEAUTY_COLOR, label="Beautified path (Miliseconds)")
     scatter!(axis, sharedXs, beautyYs, color=BEAUTY_COLOR, markersize=GRAPH_POINT_SIZE)
 
     axislegend(axis, "Seconds to build path", position=:rb)
@@ -678,8 +664,13 @@ function OPT1_ProduceBenchmarkGraphs(folderPath::String)
     mapCount = length(keys(mapNameAndFiles))
 
 
-    figureDirectory = joinpath("Benchmarks", "RunA", "Figures")
+    figureDirectory = joinpath(folderPath, "Figures")
     mkpath(figureDirectory)
+    for file in readdir(figureDirectory, join=true)
+        if isfile(file)
+            rm(file)
+        end
+    end
 
     currentFig = Figure(; size=(1600, 900))
     figs = [currentFig]

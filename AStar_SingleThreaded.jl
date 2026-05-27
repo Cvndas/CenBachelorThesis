@@ -35,6 +35,8 @@ end
 
 
 function st_AStar(startTile::MapTile, endTile::MapTile, allTiles::Array{MapTile,2})::Array{MapTile}
+    config = include("config.jl")
+    heuristicBooster = config.HEURISTIC_BOOSTER
     @assert allTiles[endTile.x, endTile.y] !== nothing "End tile wasn't in the allTiles matrix. Max x was $(size(allTiles, 1)) and max y was $(size(allTiles, 1))"
 
     xMax = size(allTiles, 1)
@@ -66,6 +68,7 @@ function st_AStar(startTile::MapTile, endTile::MapTile, allTiles::Array{MapTile,
             newCost = costSoFar[currentTile] + neighbor.costToReach
             if !haskey(costSoFar, neighbor) || newCost < costSoFar[neighbor]
                 costSoFar[neighbor] = newCost
+                # priority = newCost + heuristicBooster * _heuristic(neighbor, endTile)
                 priority = newCost + _heuristic(neighbor, endTile)
                 frontier[neighbor] = priority
                 cameFrom[neighbor] = currentTile

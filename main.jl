@@ -41,9 +41,15 @@ from non-work packages being sent over MPI.
 # TODO: Only when this warmup stuff is implemented, check the benchmarks 
 # for suspicious values, to sniff out any potential benchmarking bugs
 
-function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
-    Clear()
-    println("Starting the Benchmarking Run A")
+
+#= Run with
+include("main.jl"); main_OPT1_RunConfig(_, _);
+=#
+function main_OPT1_RunConfig(workerCount, mazeXY)
+    println("Starting the Run with config[workerCount: $workerCount, mazeXY: $mazeXY]")
+    if (workerCount < 2)
+        error("Need minimum 2 workers to run this")
+    end
 
     code = quote
         using MPI
@@ -58,17 +64,54 @@ function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
         processorName = MPI.Get_processor_name()
         # println("Hello from $processorName, I am process $rank of $nranks processes!")
 
-        CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore)
+        CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, $([mazeXY]), true)
 
         MPI.Finalize()
     end
 
     # Here, specify what to run
-    # run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np $(workerCount+1) julia --project=. -e $code`)
+
+end
+
+function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
+    Clear()
+    println("Starting the Benchmarking Run A")
+
+    path = joinpath("Benchmarks", "RunA")
+    mkpath(path)
+    for file in readdir(path, join=true)
+        if isfile(file)
+            rm(file)
+        end
+    end
+
+    code = quote
+        using MPI
+        include("CenAstar.jl")
+        using .CenAstar
+
+        mazeSizes = [100, 250, 500, 750, 1000]
+
+        MPI.Init()
+        comm = MPI.Comm_dup(MPI.COMM_WORLD)
+        nranks = MPI.Comm_size(comm)
+        rank = MPI.Comm_rank(comm)
+        masterCore = 0
+        processorName = MPI.Get_processor_name()
+        # println("Hello from $processorName, I am process $rank of $nranks processes!")
+
+        CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, mazeSizes, false)
+
+        MPI.Finalize()
+    end
+
+    # Here, specify what to run
+    run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
     run(`$(mpiexec()) -np 5 julia --project=. -e $code`)
-    # run(`$(mpiexec()) -np 9 julia --project=. -e $code`)
-    # run(`$(mpiexec()) -np 17 julia --project=. -e $code`)
-    # run(`$(mpiexec()) -np 32 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 6 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 7 julia --project=. -e $code`)
 end
 
 #= run in the julia repl with

@@ -1,104 +1,24 @@
 using MPI
+using DataStructures
 # include("OPT1_WorkerEntry.jl")
 
 
+#=
+One very important optimization:
+
+After much benchmarking and eviscerating the previous bottlenecks, I notied that the last worker would triple
+the amount of time on its initial path. This worker would never even finish in time to handle a beautification path,
+forcing another worker to do 2.
+
+Making the heuristic have more influence completely solves this. However, to keep it fair, that same boost would need
+to be applied to the single threaded version.
+=#
+
 # Before the following todos, complete the current OPT1 benchmarking.
 
-#= TODO: Opt2
-
-Destroy the dependency to previous workers in the beautification phase. Instead of beautifying with
-the previous worker's last path, beautify with the start of the first local worker path, and the end of the 
-last local worker path. This way, the number of paths to be solved locally can be turned into a variable
-
-=#
-
-#= TODO: Opt1 & Opt2
-
-Have the master core passively send more mapdata to users, so that by the time that workers request for more,
-there is probably already some map data available. Just need to do a quick iprobe after every work iteration, even if 
-more data was not requested. On the master side, if there's no request coming in, send more data as soon as
-any worker requests more. If the level increases, send everyone more data. This might be complicated to implement.
-
-=#
-
-
-#=
-The first attempt at creating an optimized MPI Parallel Hierarchic Search (Opt1). What this one does:
-
-# TODO: Implement the plan
-The master core provides parts of the map to its workers. Each worker first receives the mapdata
-that is expected to be necessary. If it is insufficient, the worker requests more.
-Each worker solves two paths. If a worker needs to request more mapdata to solve one of its
-paths, then instead of passively waiting for the new data to come in, it starts solving its other
-path.
-
-The A* pathfinding algorithm is modified to use a dictionary to find neighboring tiles, and to
-save the state of the pathfinding process on that path, in case it needs to request more data
-and come back later. I assume that the dictionary vs table lookup drawback produces a significant slowdown.
-This can be tested later.
-
-During the beautification stage, almost all the data should already be available from creating the initial
-paths. Therefore, the switching between path A and path B in the initial stage won't be necessary, and thus 
-the beautification step can involve one path for each core. Splitting the beautification paths into two
-would reduce the effectiveness of the beautification.
-
-Some notes:
-I had to do a big refactor to make MapTile an immutable structs, as instances of mutable structs are
-never isbits() compatible, which Isend() REQUIRES (regular send() does not)
-
-This is definitely a major flaw of the Julia programming language / MPI interface. Mutable vs Immutable should
-be something you decide as a programmer when the safety outweighs the inconvenience of locking yourself out of
-modifying your own data. Without having looked into it, I assume this is just an unfortunate consequence 
-of having a loose python-like "types don't exist" style language that's actually compiled. 
-Might write about this in the thesis, might not. 
-
-There is currently a small inefficiency, where sometimes the worker requests for more mapdata,
-yet the master has already sent those maptiles for the worker's OTHER job. I'll be sure to measure the number
-of times that an empty map supplement is delivered, to see if this is a truly a concern. The reason this happens
-is because when the worker works on jobA, requests data, then works on jobB, misses data for jobB, it may not
-know that perhaps the missing tiles from jobB were already on the way from the previous jobA supplement request.
-
-# TODO Other optimizations
-Currently, I have a few parts in the code that behave like blocking MPI sends and receives, but currently
-they're handled via Isend and Irecv with blocking funcs following right after. This is because I had some
-trouble getting these functions to work with my data, despite doing it with blocking funcs in the naive 
-implementation, and having those same structs and arrays working just fine there. Anyway, I'm just trying 
-to say that many of the Isend and Irecv's should be given another look
-
-Similarly, the ordering in which things happen could be adjusted for better performance. For example,
-the last worker currently solves the longest path in the beautification stage. The long path exists
-due to beautification producing a number of paths that is not divisible by the number of workers. 
-Should this task perhaps be delegated to the first worker, who is perhaps more likely to be done the
-soonest? This should be benchmarked. 
-
-In a similar vein, pathA is currenlty attempted to be solved before pathB, even though pathB
-is more important than pathA, as pathB's are required for the next worker to start with beautification. This is, 
-again, something that needs to be checked.
 
 
 
-# TODO: Features
-- GetEstimatedNecessaryCells probably still doesn't support waypointB being below waypointA. Go through it and see 
-  if that's true
-
-
-# TODO: Comprehensive logging of various things, benchmarks, etc. As for loggin
-- The number of times that empty messages are sent
-- How much mapdata is eventually sent to each worker compared to the full map data
-- How often new mapdata is requested during the beautification phase, when no latency hiding exists to compensate
-- How often pathA is solved before pathB, or vice versa
-- Which worker usually solves its initial paths first
-
-As for benchmarks
-- Single threaded vs MPI accuracy
-- Single threaded vs MPI time
-- Scaling with cores on personal laptop vs DAS-5
-- Beautification vs no beautification time
-- Beautification vs no beautification accuracy
-- How much time is spent passively waiting (i.e, when latency hiding fails)
-- etc.
-
-=#
 # Sent by master core for the initial delivery of map data, before any jobs are posted.
 const OPT1_MAP_INITIAL_DELIVERY = 0
 
@@ -106,7 +26,7 @@ const OPT1_MAP_INITIAL_DELIVERY = 0
 const OPT1_MAP_REQUEST = 1
 
 # Sent by the master core in response to a map request 
-const OPT1_MAP_RESPONSE_DELIVERY = 2
+const OPT1_MAP_SUPPLEMENT = 2
 
 # Sent by the master core to tell the worker which paths to create
 const OPT1_INITIAL_JOB_REQUEST = 3
@@ -121,6 +41,8 @@ const OPT1_BEAUTIFICATION_JOB_REQUEST = 7
 const OPT1_WORKER_BENCHMARK_REQUEST = 8
 const OPT1_WORKER_BENCHMARK_RESPONSE = 9
 const OPT1_WORKER_BENCHMARK_RESPONSE_MUTABLE = 10
+
+const OPT1_ALL_DONE = 11
 
 # // ::: -------------------------:: Structs ::------------------------- ::: // 
 #
@@ -159,6 +81,11 @@ mutable struct MinMaxY
 end
 
 
+struct AllDone
+    all::Bool
+    done::Bool
+end
+
 
 mutable struct OPT1_WorkerEntry
     workerRank::Int
@@ -172,14 +99,12 @@ mutable struct OPT1_WorkerEntry
     # array: for each "column", save the minY and maxY of the mapdata that was sent to the worker.
     sentMinMax::Array{Union{MinMaxY,Nothing}}
 
-    # Beautification path
-    solvedPathC::Union{Array{MapTile,1},Nothing}
 
     jobA_wayPoints::Tuple{MapTile,MapTile}
     jobB_wayPoints::Tuple{MapTile,MapTile}
 
     function OPT1_WorkerEntry(workerRank::Int, sentMinMax::Array{Union{MinMaxY,Nothing}}, jobA_wayPoints, jobB_wayPoints)
-        new(workerRank, 1, 1, nothing, nothing, sentMinMax, nothing, jobA_wayPoints, jobB_wayPoints)
+        new(workerRank, 1, 1, nothing, nothing, sentMinMax, jobA_wayPoints, jobB_wayPoints)
     end
 end
 
@@ -193,6 +118,9 @@ mutable struct WorkerPathfindingState
     costSoFar::Dict{MapTile,Int}
     postponed::Bool
     currentTile::MapTile
+
+    heuristicBooster::Int32
+
     function WorkerPathfindingState(startTile::MapTile, endTile::MapTile)
         frontier = PriorityQueue{MapTile,Int}()
         frontier[startTile] = 0
@@ -219,22 +147,66 @@ mutable struct MasterState
     horizontalExtensionSize::Int32
     horizontalExtensionSize_Default::Int32
 
-    workerEntries::Array{OPT1_WorkerEntry}
+    workerEntries::Vector{OPT1_WorkerEntry}
     maxX::Int32
     maxY::Int32
     nranks
     currentLevel
 
     initialPaths::Vector{Tuple{MapTile,MapTile}}
-    solved_initialPaths::Array{Array{MapTile,1},1}
+    solved_initialPaths::Vector{Vector{MapTile}}
 
-    solved_beautyPaths::Array{Array{MapTile,1},1}
+    solved_beautyPaths::Vector{Vector{MapTile}}
 
-    initialWayPoints::Array{MapTile}
-    beautifiedWayPoints::Array{MapTile}
+    initialWayPoints::Vector{MapTile}
+    beautifiedWayPoints::Vector{MapTile}
 
     benchmarkData_Master::BenchmarkData_MasterCore
-    iSendRequests
+    iSendRequests::Vector{MPI.Request}
+
+    beautificationJobsToSolve::Deque{OPT1_Job}
+    workersReadyToBeautify::Queue{Int} # Int is the worker rank
+
+    alreadyCreatedBeautificationJobs::Vector{Int}
+
+    function MasterState(
+        comm,
+        computedMaze,
+        verticalEstimationSize,
+        verticalEstimationSize_Default,
+        horizontalExtensionSize,
+        horizontalExtensionSize_Default,
+        maxX,
+        maxY,
+        nranks,
+        currentLevel,
+        initialPaths,
+        initialWayPoints,
+        benchmarkData_Master
+    )
+        new(comm,
+            computedMaze,
+            verticalEstimationSize,
+            verticalEstimationSize_Default,
+            horizontalExtensionSize,
+            horizontalExtensionSize_Default,
+            Vector{OPT1_WorkerEntry}(),
+            maxX,
+            maxY,
+            nranks,
+            currentLevel,
+            initialPaths,
+            Vector{Vector{MapTile}}(),
+            Vector{Vector{MapTile}}(),
+            initialWayPoints,
+            Vector{MapTile}(),
+            benchmarkData_Master,
+            Vector{MPI.Request}(),
+            Deque{OPT1_Job}(),
+            Queue{Int}(),
+            Vector{Int}()
+        )
+    end
 end
 
 
@@ -336,13 +308,8 @@ end
 
 
 
-function OPT1_AllBeautyPathsAreReceived(workerRecords::Array{OPT1_WorkerEntry})
-    for record::OPT1_WorkerEntry in workerRecords
-        if record.solvedPathC === nothing
-            return false
-        end
-    end
-    return true
+function OPT1_AllBeautyPathsAreReceived(s::MasterState)
+    return length(s.solved_beautyPaths) == s.nranks - 1
 end
 
 
@@ -486,13 +453,15 @@ end
 
 
 
+function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, mazeSizes, singleRun)
 
-function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore)
+    if singleRun
+        path = joinpath("Benchmarks", "SingleRun")
+    else
+        path = joinpath("Benchmarks", "RunA")
+    end
+    mkpath(path)
 
-    # mazeSizes = [20, 100, 200, 500, 1000]
-    # mazeSizes = [20, 100]
-    # mazeSizes = [20]
-    mazeSizes = [500]
     for mazeSizeUniversal in mazeSizes
         mazeSizeX = mazeSizeUniversal
         mazeSizeY = mazeSizeUniversal
@@ -528,17 +497,21 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore)
 
             fileName = OPT1_GenerateReportFilename(averageReport)
 
-            path = joinpath("Benchmarks", "RunA")
-            mkpath(path)
 
             filePath = joinpath(path, fileName)
             open(filePath, "w") do file
                 serialize(file, averageReport)
             end
+
+            if singleRun
+                OPT1_ProduceBenchmarkGraphs(path)
+            end
+
             println("Completed the benchmarking for a maze of size $(mazeSizeX)x$(mazeSizeY) with $(nranks) processors")
+
+
         end
     end
-
 end
 
 
@@ -601,7 +574,7 @@ function OPT1_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::Stri
 
         OPT1_PreSendMapSupplements(s)
 
-        while OPT1_AllBeautyPathsAreReceived(s.workerEntries) == false
+        while OPT1_AllBeautyPathsAreReceived(s) == false
             status = MPI.Probe(comm, MPI.Status; source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG)
             source = MPI.Get_source(status)
             tag = MPI.Get_tag(status)
@@ -625,12 +598,25 @@ function OPT1_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::Stri
             end
         end
 
+        allDone = AllDone(true, true)
+
+        for i in 1:nranks-1
+            MPI.send(allDone, s.comm, dest=i, tag=OPT1_ALL_DONE)
+        end
+
+        # It appears that bcast is not ordered with the rest of the messages.
+        # MPI.bcast(allDone, s.comm; root=0)
+        # println("Broadcasted allDone to all workers")
+
         # // ::: -------------------------:: Processing the Results ::------------------------- ::: // 
         fullPath_Initial::Array{MapTile,1} = reduce(vcat, s.solved_initialPaths)
         fullPath_Initial = DeduplicateFinalPath(fullPath_Initial)
         fullPath_Beauty::Array{MapTile,1} = reduce(vcat, s.solved_beautyPaths)
         fullPath_Beauty = DeduplicateFinalPath(fullPath_Beauty)
     end # T_startToBeautified
+
+    # Now, let's tell all the workers they're done
+
 
     s.benchmarkData_Master.initialPathCost = ComputePathCost(fullPath_Initial)
     s.benchmarkData_Master.beautifiedPathCost = ComputePathCost(fullPath_Beauty)
@@ -671,9 +657,6 @@ function OPT1_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::Stri
 
     workerBenchmarkDatas = Vector{BenchmarkData_WorkerCore}()
     for _ in 1:nranks-1
-        MPI.Probe(comm, MPI.Status, source=MPI.ANY_SOURCE, tag=OPT1_WORKER_BENCHMARK_RESPONSE)
-        workerBenchmarkingBuffer_ref = Ref{BenchmarkData_WorkerCore}()
-
         workerBenchmarkingEntry = MPI.recv(s.comm, source=MPI.ANY_SOURCE, tag=OPT1_WORKER_BENCHMARK_RESPONSE)
         push!(workerBenchmarkDatas, workerBenchmarkingEntry)
     end
@@ -709,10 +692,20 @@ end
 
 
 function OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMaze, mapName::String)
+
     # verticalEstimationSize_Default::Int32 = 99999999
     # horizontalExtensionSize_Default::Int32 = 99999999
+
+    # verticalEstimationSize_Default::Int32 = 16
+    # horizontalExtensionSize_Default::Int32 = 16
+
     verticalEstimationSize_Default::Int32 = 32
     horizontalExtensionSize_Default::Int32 = 16
+
+    # verticalEstimationSize_Default::Int32 = 64
+    # horizontalExtensionSize_Default::Int32 = 32
+
+
     currentLevel = 1
 
     verticalEstimationSize::Int32 = verticalEstimationSize_Default
@@ -750,40 +743,72 @@ function OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMa
         verticalEstimationSize_Default,
         horizontalExtensionSize,
         horizontalExtensionSize_Default,
-        OPT1_WorkerEntry[],
         maxX,
         maxY,
         nranks,
         currentLevel,
         initialPaths,
-        Array{MapTile,1}[], # solved initial paths
-        Array{MapTile,1}[], # solved beauty paths
         initialWayPoints,
-        MapTile[], # beautified waypoints
-        benchmarkData_Master,
-        Vector{MPI.Request}())
+        benchmarkData_Master
+    )
     return s
 end
 
 
+# Sends from worker 1 to last worker
+# function OPT1_Master_SendInitialJobs(s::MasterState, paths::Vector{Tuple{MapTile,MapTile}})
+#     pathIndex = 1
+#     @assert length(paths) == 2 * (s.nranks - 1) "length of paths was $(length(paths)) and rhs was $(2*(s.nranks - 1))"
+#     for i in 1:s.nranks-1 # for each rank
+#         pathA = paths[pathIndex]
+
+#         sentMinMax::Array{Union{MinMaxY,Nothing}} = fill(nothing, s.maxX)
+
+#         pathA_estimatedNecessaryCells::Array{MapTile,1} =
+#             OPT1_GetEstimatedNecessaryCells(pathA[1], pathA[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
+#         pathIndex += 1
+
+#         pathB = paths[pathIndex]
+#         pathB_estimatedNecessaryCells::Array{MapTile,1} =
+#             OPT1_GetEstimatedNecessaryCells(pathB[1], pathB[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
+#         pathIndex += 1
+
+#         both_estimatedNecessaryCells::Array{MapTile,1} = unique(vcat(pathA_estimatedNecessaryCells, pathB_estimatedNecessaryCells))
+
+#         workerRank = i
+
+#         # mapDataForWorker::OPT1_PhsMapData = OPT1_PhsMapData(both_estimatedNecessaryCells)
+#         push!(s.iSendRequests, MPI.Isend(both_estimatedNecessaryCells, s.comm; dest=workerRank, tag=OPT1_MAP_INITIAL_DELIVERY))
+
+#         jobA::OPT1_Job = OPT1_Job(pathA[1], pathA[2])
+#         jobB::OPT1_Job = OPT1_Job(pathB[1], pathB[2])
+#         jobsForWorker::OPT1_JobRequest = OPT1_JobRequest(jobA, jobB, s.maxX, s.maxY)
+
+#         push!(s.iSendRequests, MPI.Isend(jobsForWorker, s.comm; dest=workerRank, tag=OPT1_INITIAL_JOB_REQUEST))
 
 
+#         push!(s.workerEntries, OPT1_WorkerEntry(workerRank, sentMinMax, pathA, pathB))
+#     end
+# end
+
+# Sends from last worker to first worker
 function OPT1_Master_SendInitialJobs(s::MasterState, paths::Vector{Tuple{MapTile,MapTile}})
-    pathIndex = 1
+    pathIndex = length(paths)
     @assert length(paths) == 2 * (s.nranks - 1) "length of paths was $(length(paths)) and rhs was $(2*(s.nranks - 1))"
-    for i in 1:s.nranks-1 # for each rank
-        pathA = paths[pathIndex]
+    for i in (s.nranks-1):-1:1
 
         sentMinMax::Array{Union{MinMaxY,Nothing}} = fill(nothing, s.maxX)
-
-        pathA_estimatedNecessaryCells::Array{MapTile,1} =
-            OPT1_GetEstimatedNecessaryCells(pathA[1], pathA[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
-        pathIndex += 1
 
         pathB = paths[pathIndex]
         pathB_estimatedNecessaryCells::Array{MapTile,1} =
             OPT1_GetEstimatedNecessaryCells(pathB[1], pathB[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
-        pathIndex += 1
+
+        pathIndex -= 1
+        pathA = paths[pathIndex]
+        pathA_estimatedNecessaryCells::Array{MapTile,1} =
+            OPT1_GetEstimatedNecessaryCells(pathA[1], pathA[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
+        pathIndex -= 1
+
 
         both_estimatedNecessaryCells::Array{MapTile,1} = unique(vcat(pathA_estimatedNecessaryCells, pathB_estimatedNecessaryCells))
 
@@ -801,6 +826,7 @@ function OPT1_Master_SendInitialJobs(s::MasterState, paths::Vector{Tuple{MapTile
 
         push!(s.workerEntries, OPT1_WorkerEntry(workerRank, sentMinMax, pathA, pathB))
     end
+    reverse!(s.workerEntries)
 end
 
 
@@ -840,7 +866,7 @@ function OPT1_Master_RespondToMapRequest(s::MasterState, mapRequest::OPT1_MapReq
     supplementMapTiles::Array{MapTile,1} =
         OPT1_GetEstimatedNecessaryCells(mapRequest.wayPointA, mapRequest.wayPointB, s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
 
-    req = MPI.Isend(supplementMapTiles, s.comm, dest=source, tag=OPT1_MAP_RESPONSE_DELIVERY)
+    req = MPI.Isend(supplementMapTiles, s.comm, dest=source, tag=OPT1_MAP_SUPPLEMENT)
     push!(s.iSendRequests, req)
     # println("Master Core sent a map supplement with $(length(supplementMapTiles)) tiles over to worker $source")
 end
@@ -851,54 +877,8 @@ end
 
 
 
-function OPT1_SendBeautificationJob(s::MasterState, worker)
-    if worker > 1
-        @assert OPT1_WorkerCompletedPathBOfInitialJob(s.workerEntries[worker-1]) "Previous worker was not done yet"
-    end
-
-    #=
-    The beautifcation paths:
-    For the first worker, it starts at the start of the own first path
-    and ends at the middle of the own second path.
-
-    For middle workers, it starts at the middle of the previous worker's second path,
-    and ends at the middle of the own second path
-
-    For the last worker, it starts at the middle of the previous worker's second path,
-    and ends at the end of the own second path
-    =#
-
-    isOnlyWorker::Bool = worker == 1 && s.nranks == 2
-    isFirstWorker::Bool = worker == 1
-    isEndWorker::Bool = worker == s.nranks - 1
-    isMiddleWorker::Bool = !isFirstWorker && !isEndWorker
-
-    own::OPT1_WorkerEntry = s.workerEntries[worker]
-
-    if isOnlyWorker
-        beautyStartTile::MapTile = own.solvedPathA[end]
-        beautyEndTile::MapTile = own.solvedPathB[1]
-
-    elseif isFirstWorker
-        beautyStartTile = own.solvedPathA[end]
-        # @assert beautyStartTile.x == 1 && beautyStartTile.y == 1 "I believed that solved pathA had 1 1 at the end of the array, due to construction order. The first entry of the array though was $(own.solvedPathA[1])"
-        beautyEndTile = GetMiddleElementOfArray(own.solvedPathB)
-
-    elseif isMiddleWorker
-        prev::OPT1_WorkerEntry = s.workerEntries[worker-1]
-        beautyStartTile = GetMiddleElementOfArray(prev.solvedPathB)
-        beautyEndTile = GetMiddleElementOfArray(own.solvedPathB)
-
-    elseif isEndWorker
-        prev = s.workerEntries[worker-1]
-        beautyStartTile = GetMiddleElementOfArray(prev.solvedPathB)
-        beautyEndTile = own.solvedPathB[1]
-    else
-        error("None were true, of isFirstWorker, isEndWorker, and isMiddleWorker")
-    end
-
-    beautificationJob::OPT1_Job = OPT1_Job(beautyStartTile, beautyEndTile)
-    req = MPI.Isend(beautificationJob, s.comm; dest=worker, tag=OPT1_BEAUTIFICATION_JOB_REQUEST)
+function OPT1_SendBeautificationJob(s::MasterState, worker::Int, job::OPT1_Job)
+    req = MPI.Isend(job, s.comm; dest=worker, tag=OPT1_BEAUTIFICATION_JOB_REQUEST)
     push!(s.iSendRequests, req)
 
 end
@@ -932,6 +912,109 @@ function OPT1_Master_AllInitialPathsAreReceived(workerEntries::Array{OPT1_Worker
 end
 
 
+function OPT1_Master_TryBuildingBeautificationJobs(s::MasterState)
+
+    #= --- The recipe for creating Beautification Jobs
+    The beautifcation paths:
+    For the first worker, it starts at the start of the own first path
+    and ends at the middle of the own second path.
+
+    For middle workers, it starts at the middle of the previous worker's second path,
+    and ends at the middle of the own second path
+
+    For the last worker, it starts at the middle of the previous worker's second path,
+    and ends at the end of the own second path
+    =#
+
+
+    jobWasCreated::Bool = true
+    while jobWasCreated == true
+        jobId = 0
+        jobWasCreated = false
+        for worker::OPT1_WorkerEntry in s.workerEntries
+            jobId += 1
+            jobWasAlreadyCreatedBefore = false
+            for previouslyMadeBeautificationJob in s.alreadyCreatedBeautificationJobs
+                if jobId == previouslyMadeBeautificationJob
+                    jobWasAlreadyCreatedBefore = true
+                end
+                # else
+                # println("Job $jobId was not the same as $previouslyMadeBeautificationJob")
+                # end
+            end
+            if jobWasAlreadyCreatedBefore
+                continue
+            end
+
+            # For all workers, we are dependent of the personal A and B paths to be done. Check the recipe above to see why
+            if worker.solvedPathA === nothing || worker.solvedPathB === nothing
+                continue
+            end
+
+            highPriorityJob::Bool = false
+
+            rank = worker.workerRank
+            isOnlyWorker::Bool = rank == 1 && s.nranks == 2
+
+            isFirstWorker::Bool = rank == 1
+            isEndWorker::Bool = rank == s.nranks - 1
+            isMiddleWorker::Bool = !isFirstWorker && !isEndWorker
+
+            if isOnlyWorker
+                beautyStartTile::MapTile = worker.solvedPathA[end]
+                beautyEndTile::MapTile = worker.solvedPathB[1]
+
+            elseif isFirstWorker
+                beautyStartTile = worker.solvedPathA[end]
+                beautyEndTile = GetMiddleElementOfArray(worker.solvedPathB)
+
+            elseif isMiddleWorker
+                prev::OPT1_WorkerEntry = s.workerEntries[rank-1]
+
+                # For middle workers, we are dependent on the previous worker having finished the second path. If it's 
+                # not done, we skip.
+                if prev.solvedPathB === nothing
+                    continue
+                end
+
+                beautyStartTile = GetMiddleElementOfArray(prev.solvedPathB)
+                beautyEndTile = GetMiddleElementOfArray(worker.solvedPathB)
+
+            elseif isEndWorker
+                prev = s.workerEntries[rank-1]
+
+                # Like with middle workers, we are dependent on the previous worker having finished the second path
+                if prev.solvedPathB === nothing
+                    continue
+                end
+                beautyStartTile = GetMiddleElementOfArray(prev.solvedPathB)
+                beautyEndTile = worker.solvedPathB[1]
+
+                # The job created by the end worker is (currently) longer than the others, so it's high priority. It'll skip 
+                # the queue
+                highPriorityJob = true
+
+            else
+                error("None were true, of isFirstWorker, isEndWorker, and isMiddleWorker")
+            end
+
+            beautificationJob = OPT1_Job(beautyStartTile, beautyEndTile)
+
+            # All the checks passed. Let's submit the job to the queue 
+            jobWasCreated = true
+            if highPriorityJob
+                pushfirst!(s.beautificationJobsToSolve, beautificationJob)
+            else
+                push!(s.beautificationJobsToSolve, beautificationJob)
+            end
+            # println("Master created another beautification job")
+
+            push!(s.alreadyCreatedBeautificationJobs, jobId)
+        end
+    end
+end
+
+
 function OPT1_Master_HandleIncomingSolvedPath(s::MasterState, status::MPI.MPI_Status, source, tag)
     # Receive path over MPI. Status guaranteed that something is present.
     incomingPathSize = MPI.Get_count(status, MapTile)
@@ -954,42 +1037,51 @@ function OPT1_Master_HandleIncomingSolvedPath(s::MasterState, status::MPI.MPI_St
         end
 
     elseif tag == OPT1_PATH_DELIVERY_BEAUTIFIED
-        s.workerEntries[source].solvedPathC = receivedPath
         push!(s.solved_beautyPaths, receivedPath)
+
+        # After delivering a beuatificaiton path, the worker once again becomes available to do more work.
+        # Since the worker is now free once again, maybe there's another beautification job to solve. Let's try!
+        push!(s.workersReadyToBeautify, source)
+        OPT1_Master_TrySendingBeautificationJobs(s)
+
         # // ::: -------------------------:: Early return here ::------------------------- ::: // 
         return
     else
         error("Received incompatible tag in HandleIncomingInitialSolvedPath: $tag")
     end
+
+    # The beautification delivery had an early return. Everything from here on is guaranteed to be processing an
+    # initial path delivery
+
     push!(s.solved_initialPaths, receivedPath)
 
     firstPathReceived::Bool = s.workerEntries[source].solvedPathA !== nothing
     secondPathReceived::Bool = s.workerEntries[source].solvedPathB !== nothing
     bothPathsReceived::Bool = firstPathReceived && secondPathReceived
-    hasNext::Bool = source + 1 <= (s.nranks - 1)
 
     # We only move ourselves to beautification if both initial paths are done
     if bothPathsReceived
-        if source == 1
-            OPT1_SendBeautificationJob(s, source)
+        push!(s.workersReadyToBeautify, source)
+        # println("Worker $source is ready to receive a beautification job")
+    end
+    OPT1_Master_TryBuildingBeautificationJobs(s)
+    OPT1_Master_TrySendingBeautificationJobs(s)
+end
+
+function OPT1_Master_TrySendingBeautificationJobs(s::MasterState)
+    while true
+        mustSendBeautificationJob::Bool = !isempty(s.workersReadyToBeautify) && !isempty(s.beautificationJobsToSolve)
+        if mustSendBeautificationJob
+            workerToSolveBeautificationJob = dequeue!(s.workersReadyToBeautify)
+            beautificationJobToSolve = popfirst!(s.beautificationJobsToSolve)
+            # println("master chose to send a beautification job to $workerToSolveBeautificationJob")
+
+            OPT1_SendBeautificationJob(s, workerToSolveBeautificationJob, beautificationJobToSolve)
+            continue
         else
-            previous = s.workerEntries[source-1]
-            if OPT1_WorkerCompletedPathBOfInitialJob(previous)
-                OPT1_SendBeautificationJob(s, source)
-            end
+            break
         end
     end
-
-    # We trigger the next worker to beautify if our second path is done, and we have a next worker
-    if secondPathReceived && hasNext
-        next::Int = source + 1
-        nextEntry = s.workerEntries[next]
-        nextIsWaiting = OPT1_WorkerCompletedInitialJob(nextEntry)
-        if nextIsWaiting
-            OPT1_SendBeautificationJob(s, next)
-        end
-    end
-
 end
 
 
@@ -1019,29 +1111,33 @@ function OPT1_WorkerCore(comm, nranks, rank, masterCore)
     OPT1_Worker_CompleteJobPair(w, OPT1_PATH_DELIVERY_INITIAL_1, OPT1_PATH_DELIVERY_INITIAL_2)
     w.benchmarkData_Worker.secondsFromReceivingJobToHavingSentInitialPaths = time() - w.benchmarkData_Worker.timeOfReceivingInitialJob
 
-
     T_beforeReceivingBeautificationJob = time()
-    OPT1_Worker_ReceiveBeautificationJobs!(w)
+    # Now the second phase: Beautification, or map
+
+    # TODO: Remove unused
     T_receivingBeautificationJob = time()
-    OPT1_Worker_CompleteBeautyJob(w)
-    println("The worker $rank completed the beauty job")
+    OPT1_Worker_BeautificationPhase(w)
+
+    # println("The worker is done with the beautification phase (did $(w.benchmarkData_Worker.numberOfBeautificationJobsCompleted) beautification jobs)")
 
     # Draining the remaining map supplements that are in the mailbox, as the master core
     # always stays ahead by initially sending another map supplement, which was
     # transparent to the worker.
-    # TODO: Figure out if this is always going to be precisely 2
-    remainingMapSupplementCount = 2
-    for i in 1:remainingMapSupplementCount
-        mapSupplyStatus = MPI.Probe(comm, MPI.Status, source=0, tag=OPT1_MAP_RESPONSE_DELIVERY)
 
-        remainingMapSupplementCount += 1
-        incomingTilesSize = MPI.Get_count(mapSupplyStatus, MapTile)
-        mapSupplyDelivery = Array{MapTile,1}(undef, incomingTilesSize)
-        incomingSupplyRequest = MPI.Irecv!(mapSupplyDelivery, comm; source=0, tag=OPT1_MAP_RESPONSE_DELIVERY)
-        MPI.Wait(incomingSupplyRequest)
-    end
+    # remainingMapSupplementCount = 2
+    # for i in 1:remainingMapSupplementCount
+    #     mapSupplyStatus = MPI.Probe(comm, MPI.Status, source=0, tag=OPT1_MAP_SUPPLEMENT)
+
+    #     remainingMapSupplementCount += 1
+    #     incomingTilesSize = MPI.Get_count(mapSupplyStatus, MapTile)
+    #     mapSupplyDelivery = Array{MapTile,1}(undef, incomingTilesSize)
+    #     incomingSupplyRequest = MPI.Irecv!(mapSupplyDelivery, comm; source=0, tag=OPT1_MAP_SUPPLEMENT)
+    #     MPI.Wait(incomingSupplyRequest)
+    # end
 
     # println("Worker drained all the remaining map supplements that were in the mailbox.")
+    # remainingJunkAvailable, remainingJunkStatus::MPI.Status = MPI.Iprobe(comm, MPI.Status, source=0, tag=MPI.ANY_TAG)
+    # @assert remainingJunkAvailable == false "There was remaining junk in MPI for worker $rank with tag $(remainingJunkStatus.tag)"
 
 
     w.benchmarkData_Worker.waitingForBeautificationJobAfterSolvingInitial = time() - T_beforeReceivingBeautificationJob
@@ -1053,6 +1149,8 @@ function OPT1_WorkerCore(comm, nranks, rank, masterCore)
     # benchmarkingRequestStatus = MPI.Probe(comm, MPI.Status, source=masterCore, tag=OPT1_WORKER_BENCHMARK_REQUEST)
 
     # benchmarkingRequestBuffer_ref = Ref{OPT1_WorkerBenchmarkingDataRequest}()
+
+
     benchmarkingRequestBuffer = Vector{Int64}
     benchmarkingRequestBuffer = MPI.recv(comm; source=masterCore, tag=OPT1_WORKER_BENCHMARK_REQUEST)
 
@@ -1061,7 +1159,6 @@ function OPT1_WorkerCore(comm, nranks, rank, masterCore)
     for iSendRequest::MPI.Request in w.iSendRequests
         MPI.Wait(iSendRequest)
     end
-
 end
 
 
@@ -1086,11 +1183,11 @@ function OPT1_Worker_ReceiveAndProcessMapRequest!(w::WorkerState)
     availableTiles = w.availableTiles
     rank = w.rank
 
-    isMessageAvailable, mapSupplyStatus::MPI.Status = MPI.Iprobe(comm, MPI.Status, ; source=0, tag=OPT1_MAP_RESPONSE_DELIVERY)
+    isMessageAvailable, mapSupplyStatus::MPI.Status = MPI.Iprobe(comm, MPI.Status, ; source=0, tag=OPT1_MAP_SUPPLEMENT)
     if isMessageAvailable == false
         T_waitingForDataToComeIn = time()
         w.benchmarkData_Worker.numberOfOccasionsMapDataWasNotAvailableAndIHadToWait += 1
-        mapSupplyStatus = MPI.Probe(comm, MPI.Status, source=0, tag=OPT1_MAP_RESPONSE_DELIVERY)
+        mapSupplyStatus = MPI.Probe(comm, MPI.Status, source=0, tag=OPT1_MAP_SUPPLEMENT)
         w.benchmarkData_Worker.secondsSpentWaitingForMapDataToComeIn += (time() - T_waitingForDataToComeIn)
     end
 
@@ -1099,7 +1196,7 @@ function OPT1_Worker_ReceiveAndProcessMapRequest!(w::WorkerState)
 
     mapSupplyDelivery = Array{MapTile,1}(undef, incomingTilesSize)
 
-    incomingSupplyRequest = MPI.Irecv!(mapSupplyDelivery, comm; source=0, tag=OPT1_MAP_RESPONSE_DELIVERY)
+    incomingSupplyRequest = MPI.Irecv!(mapSupplyDelivery, comm; source=0, tag=OPT1_MAP_SUPPLEMENT)
     MPI.Wait(incomingSupplyRequest)
 
     # println("Worker $rank received a new batch of tiles, with $(length(mapSupplyDelivery)) tiles.")
@@ -1116,7 +1213,45 @@ function OPT1_Worker_ReceiveAndProcessMapRequest!(w::WorkerState)
 end
 
 
+function OPT1_Worker_BeautificationPhase(w::WorkerState)
+    #=
+    In the beautification phase, we can receive 3 types of messages:
+    1. A beautification job
+    2. A map supplement
+    3. An AllDone message
+    =#
+    hasBeautificationJob::Bool = false
+    while true
+        status = MPI.Probe(w.comm, MPI.Status; source=0, tag=MPI.ANY_TAG)
+        tag = MPI.Get_tag(status)
 
+
+        if tag == OPT1_BEAUTIFICATION_JOB_REQUEST
+            OPT1_Worker_ReceiveBeautificationJobs!(w)
+            # println("Worker $(w.rank) received a beautification job")
+            hasBeautificationJob = true
+
+        elseif tag == OPT1_MAP_SUPPLEMENT
+            OPT1_Worker_ReceiveAndProcessMapRequest!(w)
+
+        elseif tag == OPT1_ALL_DONE
+            MPI.recv(w.comm)
+            break
+        else
+            error("Not handling tag $tag in the beautification phase")
+        end
+
+        if hasBeautificationJob
+            OPT1_Worker_CompleteBeautyJob(w)
+            # println("Worker $(w.rank) completed a beautification job")
+            w.benchmarkData_Worker.numberOfBeautificationJobsCompleted += 1
+            hasBeautificationJob = false
+        end
+    end
+
+
+
+end
 
 
 function OPT1_Worker_ReceiveBeautificationJobs!(w::WorkerState)
@@ -1131,7 +1266,7 @@ function OPT1_Worker_ReceiveBeautificationJobs!(w::WorkerState)
 
     while (!haskey(w.availableTiles, startTuple) || !haskey(w.availableTiles, endTuple))
         mapRequest::OPT1_MapRequest = OPT1_MapRequest(beautyJob.wayPointA, beautyJob.wayPointB, false, true)
-        push!(w.iSendRequests, MPI.Isend(mapRequest, comm, dest=0, tag=OPT1_MAP_REQUEST))
+        push!(w.iSendRequests, MPI.Isend(mapRequest, w.comm, dest=0, tag=OPT1_MAP_REQUEST))
         OPT1_Worker_ReceiveAndProcessMapRequest!(w)
     end
 
@@ -1293,6 +1428,9 @@ end
 #
 function OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, maxX::Int32, maxY::Int32, state::WorkerPathfindingState)::Union{Array{MapTile},Nothing}
 
+    config = include("Config.jl")
+    heuristicBooster = config.HEURISTIC_BOOSTER
+
     # Declaring this outside so it doesn't get re-allocated every iteration
     neighbors::Array{MapTile} = MapTile[]
 
@@ -1371,7 +1509,7 @@ function OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, maxX
 
             if !haskey(state.costSoFar, neighbor) || newCost < state.costSoFar[neighbor]
                 state.costSoFar[neighbor] = newCost
-                priority = newCost + _heuristic(neighbor, state.endTile)
+                priority = newCost + heuristicBooster * _heuristic(neighbor, state.endTile)
                 state.frontier[neighbor] = priority
                 state.cameFrom[neighbor] = state.currentTile
             end

@@ -18,6 +18,9 @@ function _MoveOffWalls(straightLine::Array{MapTile,1}, originalIndex, minIndex, 
         end
     end
 
+    difference = abs(originalIndex - safeIndex)
+    println("Moving waypoitns off walls: The positional change is $difference")
+
 
     return safeIndex
 end
