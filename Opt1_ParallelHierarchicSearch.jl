@@ -703,6 +703,8 @@ end
 
 function OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMaze, mapName::String)
 
+    # Magic values to tune for good results 
+
     # verticalEstimationSize_Default::Int32 = 99999999
     # horizontalExtensionSize_Default::Int32 = 99999999
 
