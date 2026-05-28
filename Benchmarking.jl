@@ -42,6 +42,12 @@ mutable struct BenchmarkData_WorkerCore
     timeOfFinishingInitialJob::Float64
     timeOfReceivingBeauticationJob::Float64
 
+    initialPath_tilesExplored::Int
+    secondsNotSpentDoingWorkInInitialPath::Float64
+
+    secondsReceivingIncomingMapSupplements::Float64
+    secondsProcessingIncomingMapSupplements::Float64
+
 
     function BenchmarkData_WorkerCore(workerRank::Int)::BenchmarkData_WorkerCore
         new(
@@ -71,6 +77,12 @@ mutable struct BenchmarkData_WorkerCore
             #
             0, # Finishing initial job
             -99, # receiving beautification job
+            #
+            0, # Initial path tiles explored
+            0, # seconds spent not doing wokr in initial path
+            #
+            0, # seconds receiving incoming map supplements
+            0, # seconds processing incoming map supplements
         )
     end
 end
@@ -275,6 +287,13 @@ struct OPT1_BenchmarkingReportStruct
     numberOfBeautificationPathsSolved_BWA
 
     numberOfTimesPriorityWorkerWasChosenForBeautification
+    initialPathTilesExplored_BWA
+
+    initialPathTilesExploredBySlowestSolver
+    secondsNotSpentDoingWorkInInitialPath_BWA
+
+    secondsSpentReceivingIncomingMapSupplements_BWA
+    secondsSpentProcessingIncomingMapSupplements_BWA
 end
 
 function OPT1_AverageBenchmarkingReportStructs(reportStructs::Vector{OPT1_BenchmarkingReportStruct})::OPT1_BenchmarkingReportStruct
@@ -327,7 +346,14 @@ function OPT1_AverageBenchmarkingReportStructs(reportStructs::Vector{OPT1_Benchm
         mean(r.st_seconds for r in reportStructs),
         BWA_Average([r.numberOfBeautificationPathsSolved_BWA for r in reportStructs]),
         #
-        mean(r.numberOfTimesPriorityWorkerWasChosenForBeautification for r in reportStructs)
+        mean(r.numberOfTimesPriorityWorkerWasChosenForBeautification for r in reportStructs),
+        BWA_Average([r.initialPathTilesExplored_BWA for r in reportStructs]),
+        #
+        mean(r.initialPathTilesExploredBySlowestSolver for r in reportStructs),
+        BWA_Average([r.secondsNotSpentDoingWorkInInitialPath_BWA for r in reportStructs]),
+        #
+        BWA_Average([r.secondsSpentReceivingIncomingMapSupplements_BWA for r in reportStructs]),
+        BWA_Average([r.secondsSpentProcessingIncomingMapSupplements_BWA for r in reportStructs])
     )
 end
 
@@ -343,7 +369,8 @@ function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct):
         "secondsFromReceivingJobToHavingSentBeautifiedPaths",
         "secondsFromStartToHavingReceivedAllInitialPaths",
         "secondsFromStartToHavingReceivedAllBeautifiedPaths",
-        "st_seconds",]
+        "st_seconds",
+        "Explored"]
     potentialBottlenecks = ""
     allFloatValues = Vector{Float64}()
     averageBottleneckValue = 0
@@ -401,6 +428,7 @@ function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct):
 
         end
     end
+
 
 
     # TODO: Total time not doing raw computation (summing waiting and non-waiting together)
@@ -471,10 +499,34 @@ function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct):
         Lucky worker $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.bestId) took $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.bestVal) seconds to solve beautified path after receiving beautification job
         On average, a worker spent $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.averageVal) seconds to solve the beautification path after receiving the beautification job
 
+        | Worker: Waiting for beautification job after solving initial paths
         Unlucky worker $(r.waitingForBeautificationJobAfterSolvingInitial_BWA.worstId) spent $(r.waitingForBeautificationJobAfterSolvingInitial_BWA.worstVal) seconds waiting for beautification job after solving initial
         Lucky worker $(r.waitingForBeautificationJobAfterSolvingInitial_BWA.bestId) spent $(r.waitingForBeautificationJobAfterSolvingInitial_BWA.bestVal) seconds waiting for beautification job after solving initial
         On average, a worker spent $(r.waitingForBeautificationJobAfterSolvingInitial_BWA.averageVal) seconds waiting for beautification job after solving initial
 
+        | Worker: Number of tiles explored in the initial path
+        Unlucky worker $(r.initialPathTilesExplored_BWA.worstId) explored $(r.initialPathTilesExplored_BWA.worstVal) tiles in the initial path
+        Lucky worker $(r.initialPathTilesExplored_BWA.bestId) explored $(r.initialPathTilesExplored_BWA.bestVal) tiles in the initial path
+        On average, a worker explored $(r.initialPathTilesExplored_BWA.averageVal) tiles in the initial path
+        The slowest initial path solver explored $(r.initialPathTilesExploredBySlowestSolver) in the initial solve
+
+        | Seconds spent NOT doing work in initial path
+        Unlucky worker $(r.secondsNotSpentDoingWorkInInitialPath_BWA.worstId) spent $(r.secondsNotSpentDoingWorkInInitialPath_BWA.worstVal) seconds not doing work in the initial path
+        Lucky worker $(r.secondsNotSpentDoingWorkInInitialPath_BWA.bestId) spent $(r.secondsNotSpentDoingWorkInInitialPath_BWA.bestVal) seconds not doing work in the initial path
+        On average, a worker spent $(r.secondsNotSpentDoingWorkInInitialPath_BWA.averageVal) seconds not doing work in the initial path
+
+        | Seconds spent receiving available map supplements
+        Unlucky worker $(r.secondsSpentReceivingIncomingMapSupplements_BWA.worstId) spent $(r.secondsSpentReceivingIncomingMapSupplements_BWA.worstVal) seconds receiving available map supplements
+        Lucky worker $(r.secondsSpentReceivingIncomingMapSupplements_BWA.bestId) spent $(r.secondsSpentReceivingIncomingMapSupplements_BWA.bestVal) seconds receiving available map supplements
+        On average, a worker spent $(r.secondsSpentReceivingIncomingMapSupplements_BWA.averageVal) seconds receiving available map supplements
+
+        | Seconds spent processing map supplements
+        Unlucky worker $(r.secondsSpentProcessingIncomingMapSupplements_BWA.worstId) spent $(r.secondsSpentProcessingIncomingMapSupplements_BWA.worstVal) seconds processing available map supplements
+        Lucky worker $(r.secondsSpentProcessingIncomingMapSupplements_BWA.bestId) spent $(r.secondsSpentProcessingIncomingMapSupplements_BWA.bestVal) seconds processing available map supplements
+        On average, a worker spent $(r.secondsSpentProcessingIncomingMapSupplements_BWA.averageVal) seconds processing available map supplements
+
+
+        | Beautification paths solved by high-priority workers
         On average, a priority worker was chosen $(percentageOfTimePriorityWorkerWasChosen)% of the time.
 
         | Hyperparameter Configuration
@@ -533,6 +585,17 @@ function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, work
     beautificationPathsSolvedTuples = [(w.numberOfBeautificationJobsCompleted, w.workerId) for w in workerDatas]
     beautificationPathsSolved_BWA = BestWorstAverage(beautificationPathsSolvedTuples)
 
+    initialPathTilesExploredTuples = [(w.initialPath_tilesExplored, w.workerId) for w in workerDatas]
+    initialPathTilesExplored_BWA = BestWorstAverage(initialPathTilesExploredTuples)
+
+    slowestInitialSolverId = initialJob_BWA.worstId
+    initialPathTilesExploredBySlowestSolver = first((w.initialPath_tilesExplored, w.workerId) for w in workerDatas if w.workerId == slowestInitialSolverId)[1]
+
+    secondsNotSpentDoingWorkInInitialPath_Tuples = [(w.secondsNotSpentDoingWorkInInitialPath, w.workerId) for w in workerDatas]
+
+    secondsReceivingIncomingMapSupplements_Tuples = [(w.secondsReceivingIncomingMapSupplements, w.workerId) for w in workerDatas]
+    secondsProcessingIncomingMapSupplements_Tuples = [(w.secondsProcessingIncomingMapSupplements, w.workerId) for w in workerDatas]
+
     reportStruct = OPT1_BenchmarkingReportStruct(
         m.mapName,
         m.workerCount,
@@ -576,8 +639,16 @@ function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, work
         stSeconds,
         beautificationPathsSolved_BWA,
         #
-        m.numberOfTimesPriorityWorkerWasChosenForBeautification
+        m.numberOfTimesPriorityWorkerWasChosenForBeautification,
+        initialPathTilesExplored_BWA,
+        #
+        initialPathTilesExploredBySlowestSolver,
+        BestWorstAverage(secondsNotSpentDoingWorkInInitialPath_Tuples),
+        #
+        BestWorstAverage(secondsReceivingIncomingMapSupplements_Tuples),
+        BestWorstAverage(secondsProcessingIncomingMapSupplements_Tuples)
     )
+
 
     return reportStruct
 end

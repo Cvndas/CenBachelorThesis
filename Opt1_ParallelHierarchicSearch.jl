@@ -232,7 +232,7 @@ mutable struct WorkerState
     jobBState::WorkerPathfindingState
 
     beautyJobState::Union{WorkerPathfindingState,Nothing}
-    benchmarkData_Worker::BenchmarkData_WorkerCore
+    bench::BenchmarkData_WorkerCore
 
     # This holds iSend requests, so they aren't garbage collected until the full operation is done
     iSendRequests::Vector{MPI.Request}
@@ -1082,6 +1082,8 @@ function OPT1_Master_HandleIncomingSolvedPath(s::MasterState, status::MPI.MPI_St
     OPT1_Master_TrySendingBeautificationJobs(s)
 end
 
+
+
 function OPT1_Master_TrySendingBeautificationJobs(s::MasterState)
     while true
         mustSendBeautificationJob::Bool = !isempty(s.workersReadyToBeautify) && !isempty(s.beautificationJobsToSolve)
@@ -1130,18 +1132,18 @@ function OPT1_WorkerCore(comm, nranks, rank, masterCore)
     # TODO: Measure how many beautification jobs each worker does, worst case, best case, average case. Add to benchmark
     T_startTime = time()
     w::WorkerState = OPT1_Worker_ReceiveInitialMapDataAndJobs(comm, rank)
-    w.benchmarkData_Worker.startTime = T_startTime
-    w.benchmarkData_Worker.timeOfReceivingInitialJob = time()
+    w.bench.startTime = T_startTime
+    w.bench.timeOfReceivingInitialJob = time()
 
     OPT1_Worker_CompleteJobPair(w, OPT1_PATH_DELIVERY_INITIAL_1, OPT1_PATH_DELIVERY_INITIAL_2)
-    w.benchmarkData_Worker.timeOfFinishingInitialJob = time()
-    w.benchmarkData_Worker.secondsFromReceivingJobToHavingSentInitialPaths = time() - w.benchmarkData_Worker.timeOfReceivingInitialJob
+    w.bench.timeOfFinishingInitialJob = time()
+    w.bench.secondsFromReceivingJobToHavingSentInitialPaths = time() - w.bench.timeOfReceivingInitialJob
 
     # Now the second phase: Beautification, or map
 
     OPT1_Worker_BeautificationPhase(w)
 
-    # println("The worker is done with the beautification phase (did $(w.benchmarkData_Worker.numberOfBeautificationJobsCompleted) beautification jobs)")
+    # println("The worker is done with the beautification phase (did $(w.bench.numberOfBeautificationJobsCompleted) beautification jobs)")
 
     # Draining the remaining map supplements that are in the mailbox, as the master core
     # always stays ahead by initially sending another map supplement, which was
@@ -1162,8 +1164,8 @@ function OPT1_WorkerCore(comm, nranks, rank, masterCore)
     # remainingJunkAvailable, remainingJunkStatus::MPI.Status = MPI.Iprobe(comm, MPI.Status, source=0, tag=MPI.ANY_TAG)
     # @assert remainingJunkAvailable == false "There was remaining junk in MPI for worker $rank with tag $(remainingJunkStatus.tag)"
 
-    w.benchmarkData_Worker.solvingBeautifiedPathAfterReceivingBeautificationJob = time() - w.benchmarkData_Worker.timeOfReceivingBeauticationJob
-    w.benchmarkData_Worker.secondsFromReceivingJobToHavingSentBeautifiedPaths = time() - w.benchmarkData_Worker.timeOfReceivingInitialJob
+    w.bench.solvingBeautifiedPathAfterReceivingBeautificationJob = time() - w.bench.timeOfReceivingBeauticationJob
+    w.bench.secondsFromReceivingJobToHavingSentBeautifiedPaths = time() - w.bench.timeOfReceivingInitialJob
 
     # Wait until we receive a benchmarking request from the master. We don't want to pollute MPI
     # when other workers are still busy.
@@ -1175,7 +1177,7 @@ function OPT1_WorkerCore(comm, nranks, rank, masterCore)
     benchmarkingRequestBuffer = Vector{Int64}
     benchmarkingRequestBuffer = MPI.recv(comm; source=masterCore, tag=OPT1_WORKER_BENCHMARK_REQUEST)
 
-    MPI.send(w.benchmarkData_Worker, comm; dest=masterCore, tag=OPT1_WORKER_BENCHMARK_RESPONSE)
+    MPI.send(w.bench, comm; dest=masterCore, tag=OPT1_WORKER_BENCHMARK_RESPONSE)
 
     for iSendRequest::MPI.Request in w.iSendRequests
         MPI.Wait(iSendRequest)
@@ -1199,7 +1201,7 @@ end
 
 
 
-function OPT1_Worker_ReceiveAndProcessMapRequest!(w::WorkerState)
+function OPT1_Worker_ReceiveAndProcessMapSupplement!(w::WorkerState)
     comm = w.comm
     availableTiles = w.availableTiles
     rank = w.rank
@@ -1207,30 +1209,25 @@ function OPT1_Worker_ReceiveAndProcessMapRequest!(w::WorkerState)
     isMessageAvailable, mapSupplyStatus::MPI.Status = MPI.Iprobe(comm, MPI.Status, ; source=0, tag=OPT1_MAP_SUPPLEMENT)
     if isMessageAvailable == false
         T_waitingForDataToComeIn = time()
-        w.benchmarkData_Worker.numberOfOccasionsMapDataWasNotAvailableAndIHadToWait += 1
+        w.bench.numberOfOccasionsMapDataWasNotAvailableAndIHadToWait += 1
         mapSupplyStatus = MPI.Probe(comm, MPI.Status, source=0, tag=OPT1_MAP_SUPPLEMENT)
-        w.benchmarkData_Worker.secondsSpentWaitingForMapDataToComeIn += (time() - T_waitingForDataToComeIn)
+        w.bench.secondsSpentWaitingForMapDataToComeIn += (time() - T_waitingForDataToComeIn)
     end
+
+    T_startOfReceivingMapSupplement = time()
 
     incomingTilesSize = MPI.Get_count(mapSupplyStatus, MapTile)
-    # println("Worker $rank has received a probe signal for a map supplement\n Supposedly, the mapdata will have $incomingTilesSize elements")
-
     mapSupplyDelivery = Array{MapTile,1}(undef, incomingTilesSize)
+    MPI.Recv!(mapSupplyDelivery, comm; source=0, tag=OPT1_MAP_SUPPLEMENT)
 
-    incomingSupplyRequest = MPI.Irecv!(mapSupplyDelivery, comm; source=0, tag=OPT1_MAP_SUPPLEMENT)
-    MPI.Wait(incomingSupplyRequest)
+    w.bench.secondsReceivingIncomingMapSupplements += time() - T_startOfReceivingMapSupplement
 
-    # println("Worker $rank received a new batch of tiles, with $(length(mapSupplyDelivery)) tiles.")
-
+    T_startOfProcessingMapSupplement = time()
     for suppliedTile::MapTile in mapSupplyDelivery
         @assert !haskey(availableTiles, (suppliedTile.x, suppliedTile.y)) "Worker $rank already had the tile $suppliedTile in its storage"
-        # if haskey(availableTiles, (suppliedTile.x, suppliedTile.y))
-        #     println("~~~~~~~~~~~++++++++++++~~~~~~~Worker $rank already had the tile $suppliedTile in its storage")
-        # end
-        # if haskey(availableTiles, (suppliedTile.x, suppliedTile.y)) == false
         availableTiles[(suppliedTile.x, suppliedTile.y)] = suppliedTile
-        # end
     end
+    w.bench.secondsProcessingIncomingMapSupplements += time() - T_startOfProcessingMapSupplement
 end
 
 
@@ -1249,9 +1246,9 @@ function OPT1_Worker_BeautificationPhase(w::WorkerState)
 
         if tag == OPT1_BEAUTIFICATION_JOB_REQUEST
             # Only measure the first time this happens
-            if w.benchmarkData_Worker.waitingForBeautificationJobAfterSolvingInitial < -1
-                w.benchmarkData_Worker.waitingForBeautificationJobAfterSolvingInitial = time() - w.benchmarkData_Worker.timeOfFinishingInitialJob
-                w.benchmarkData_Worker.timeOfReceivingBeauticationJob = time()
+            if w.bench.waitingForBeautificationJobAfterSolvingInitial < -1
+                w.bench.waitingForBeautificationJobAfterSolvingInitial = time() - w.bench.timeOfFinishingInitialJob
+                w.bench.timeOfReceivingBeauticationJob = time()
             end
 
             OPT1_Worker_ReceiveBeautificationJobs!(w)
@@ -1259,7 +1256,7 @@ function OPT1_Worker_BeautificationPhase(w::WorkerState)
             hasBeautificationJob = true
 
         elseif tag == OPT1_MAP_SUPPLEMENT
-            OPT1_Worker_ReceiveAndProcessMapRequest!(w)
+            OPT1_Worker_ReceiveAndProcessMapSupplement!(w)
 
         elseif tag == OPT1_ALL_DONE
             MPI.recv(w.comm)
@@ -1271,7 +1268,7 @@ function OPT1_Worker_BeautificationPhase(w::WorkerState)
         if hasBeautificationJob
             OPT1_Worker_CompleteBeautyJob(w)
             # println("Worker $(w.rank) completed a beautification job")
-            w.benchmarkData_Worker.numberOfBeautificationJobsCompleted += 1
+            w.bench.numberOfBeautificationJobsCompleted += 1
             hasBeautificationJob = false
         end
     end
@@ -1282,11 +1279,15 @@ end
 
 
 function OPT1_Worker_ReceiveBeautificationJobs!(w::WorkerState)
-    beautyJob_Ref = Ref{OPT1_Job}()
-    beautyJob_MPI_Request = MPI.Irecv!(beautyJob_Ref, w.comm; source=0, tag=OPT1_BEAUTIFICATION_JOB_REQUEST)
-    MPI.Wait(beautyJob_MPI_Request)
+    # beautyJob_Ref = Ref{OPT1_Job}()
+    # beautyJob_MPI_Request = MPI.Irecv!(beautyJob_Ref, w.comm; source=0, tag=OPT1_BEAUTIFICATION_JOB_REQUEST)
+    # MPI.Wait(beautyJob_MPI_Request)
+    # beautyJob::OPT1_Job = beautyJob_Ref[]
 
-    beautyJob::OPT1_Job = beautyJob_Ref[]
+    beautyJobRef = Ref{OPT1_Job}()
+    MPI.Recv!(beautyJobRef, w.comm; source=0, tag=OPT1_BEAUTIFICATION_JOB_REQUEST)
+    beautyJob = beautyJobRef[]
+
 
     startTuple = (beautyJob.wayPointA.x, beautyJob.wayPointA.y)
     endTuple = (beautyJob.wayPointB.x, beautyJob.wayPointB.y)
@@ -1294,7 +1295,7 @@ function OPT1_Worker_ReceiveBeautificationJobs!(w::WorkerState)
     while (!haskey(w.availableTiles, startTuple) || !haskey(w.availableTiles, endTuple))
         mapRequest::OPT1_MapRequest = OPT1_MapRequest(beautyJob.wayPointA, beautyJob.wayPointB, false, true)
         push!(w.iSendRequests, MPI.Isend(mapRequest, w.comm, dest=0, tag=OPT1_MAP_REQUEST))
-        OPT1_Worker_ReceiveAndProcessMapRequest!(w)
+        OPT1_Worker_ReceiveAndProcessMapSupplement!(w)
     end
 
     beauty_startTile = w.availableTiles[startTuple]
@@ -1317,9 +1318,7 @@ function OPT1_Worker_ReceiveInitialMapDataAndJobs(comm, rank)::WorkerState
 
     initialMapDataDelivery = Array{MapTile,1}(undef, mapDataCount)
 
-    initialMapDataDelivery_MPIRequest = MPI.Irecv!(initialMapDataDelivery, comm; source=0, tag=OPT1_MAP_INITIAL_DELIVERY)
-    MPI.Wait(initialMapDataDelivery_MPIRequest)
-
+    MPI.Recv!(initialMapDataDelivery, comm; source=0, tag=OPT1_MAP_INITIAL_DELIVERY)
 
     # This is probably very slow.
     availableTiles::Dict{Tuple{Int32,Int32},MapTile} = Dict{Tuple{Int32,Int32},MapTile}()
@@ -1361,14 +1360,14 @@ function OPT1_Worker_CompleteBeautyJob(w::WorkerState)
     beautyJobSolved::Bool = false
     while beautyJobSolved == false
         T_beforeComputation = time()
-        jobSolveResult = OPT1_CustomAStar(w.availableTiles, w.maxX, w.maxY, w.beautyJobState)
-        w.benchmarkData_Worker.rawComputationSeconds_Beautify += time() - T_beforeComputation
+        jobSolveResult = OPT1_CustomAStar(w, w.beautyJobState)
+        w.bench.rawComputationSeconds_Beautify += time() - T_beforeComputation
         if jobSolveResult === nothing
             # Request for more data to come in, and wait for it
-            w.benchmarkData_Worker.numberOfTimesNewMapDataWasRequested += 1
+            w.bench.numberOfTimesNewMapDataWasRequested += 1
             OPT1_Worker_SendMapRequest(w.beautyJobState, false, w.comm, w; isBeauty=true)
             w.beautyJobState.postponed = true
-            OPT1_Worker_ReceiveAndProcessMapRequest!(w)
+            OPT1_Worker_ReceiveAndProcessMapSupplement!(w)
         else
             beautyJobSolved = true
             OPT1_Worker_SendCompletedPath(jobSolveResult, OPT1_PATH_DELIVERY_BEAUTIFIED, w.comm, w)
@@ -1382,18 +1381,23 @@ function OPT1_Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobBComp
     jobASolved::Bool = false
     jobBSolved::Bool = false
 
+    T_jobPairStart = time()
+    timeSpentWorking = 0
+
     while !jobASolved || !jobBSolved
 
         if !jobASolved
             # Check if Job A's supplement has come in the mail yet.
             if w.jobAState.postponed
-                OPT1_Worker_ReceiveAndProcessMapRequest!(w)
+                OPT1_Worker_ReceiveAndProcessMapSupplement!(w)
             end
             T_beforeComputation = time()
-            jobA_solveResult = OPT1_CustomAStar(w.availableTiles, w.maxX, w.maxY, w.jobAState)
-            w.benchmarkData_Worker.rawComputationSeconds_Initial += time() - T_beforeComputation
+            jobA_solveResult = OPT1_CustomAStar(w, w.jobAState)
+            timeSpentWorking += time() - T_beforeComputation
+
+            w.bench.rawComputationSeconds_Initial += time() - T_beforeComputation
             if jobA_solveResult === nothing
-                w.benchmarkData_Worker.numberOfTimesNewMapDataWasRequested += 1
+                w.bench.numberOfTimesNewMapDataWasRequested += 1
                 OPT1_Worker_SendMapRequest(w.jobAState, true, w.comm, w)
                 w.jobAState.postponed = true
             else
@@ -1408,13 +1412,15 @@ function OPT1_Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobBComp
 
             # Check if Job B's supplement has come in the mail yet 
             if w.jobBState.postponed
-                OPT1_Worker_ReceiveAndProcessMapRequest!(w)
+                OPT1_Worker_ReceiveAndProcessMapSupplement!(w)
             end
             T_beforeComputation = time()
-            jobB_solveResult = OPT1_CustomAStar(w.availableTiles, w.maxX, w.maxY, w.jobBState)
-            w.benchmarkData_Worker.rawComputationSeconds_Initial += time() - T_beforeComputation
+            jobB_solveResult = OPT1_CustomAStar(w, w.jobBState)
+            timeSpentWorking += time() - T_beforeComputation
+
+            w.bench.rawComputationSeconds_Initial += time() - T_beforeComputation
             if jobB_solveResult === nothing
-                w.benchmarkData_Worker.numberOfTimesNewMapDataWasRequested += 1
+                w.bench.numberOfTimesNewMapDataWasRequested += 1
                 OPT1_Worker_SendMapRequest(w.jobBState, false, w.comm, w)
                 w.jobBState.postponed = true
             else
@@ -1425,6 +1431,8 @@ function OPT1_Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobBComp
         end
 
     end
+
+    w.bench.secondsNotSpentDoingWorkInInitialPath = time() - T_jobPairStart - timeSpentWorking
 
 end
 
@@ -1453,98 +1461,103 @@ end
 #
 #
 #
-function OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, maxX::Int32, maxY::Int32, state::WorkerPathfindingState)::Union{Array{MapTile},Nothing}
+
+function AStar_OPT1_GetNeighbors!(wState::WorkerState, neighbors::Array{MapTile}, pathfindingState::WorkerPathfindingState)::Bool
+    # Returns nothing when a tile is missing, and the master core needs to supply it for us.
+    empty!(neighbors)
+    northY = pathfindingState.currentTile.y + 1
+    if northY <= wState.maxY
+        northX = pathfindingState.currentTile.x
+        north = get(wState.availableTiles, (northX, northY), nothing)
+        if north === nothing
+            return false
+        end
+        push!(neighbors, north)
+    end
+
+    eastX = pathfindingState.currentTile.x + 1
+    if eastX <= wState.maxX
+        eastY = pathfindingState.currentTile.y
+        east = get(wState.availableTiles, (eastX, eastY), nothing)
+        if east === nothing
+            return false
+        end
+        push!(neighbors, east)
+    end
+
+    southY = pathfindingState.currentTile.y - 1
+    if southY >= 1
+        southX = pathfindingState.currentTile.x
+        south = get(wState.availableTiles, (southX, southY), nothing)
+        if south === nothing
+            return false
+        end
+        push!(neighbors, south)
+    end
+
+    westX = pathfindingState.currentTile.x - 1
+    if westX >= 1
+        westY = pathfindingState.currentTile.y
+        west = get(wState.availableTiles, (westX, westY), nothing)
+        if west === nothing
+            return false
+        end
+        push!(neighbors, west)
+    end
+
+
+    if pathfindingState === wState.jobBState || pathfindingState === wState.jobAState
+        wState.bench.initialPath_tilesExplored += 1
+    end
+
+    return true
+end
+
+
+function OPT1_CustomAStar(w::WorkerState, pathfindingState)::Union{Array{MapTile},Nothing}
     config = include("Config.jl")
     heuristicBooster = config.HEURISTIC_BOOSTER
 
     # Declaring this outside so it doesn't get re-allocated every iteration
     neighbors::Array{MapTile} = MapTile[]
 
-    function AStar_OPT1_GetNeighbors!()::Bool
-        # Returns nothing when a tile is missing, and the master core needs to supply it for us.
-
-
-
-        empty!(neighbors)
-        northY = state.currentTile.y + 1
-        if northY <= maxY
-            northX = state.currentTile.x
-            north = get(availableTiles, (northX, northY), nothing)
-            if north === nothing
-                return false
-            end
-            push!(neighbors, north)
-        end
-
-        eastX = state.currentTile.x + 1
-        if eastX <= maxX
-            eastY = state.currentTile.y
-            east = get(availableTiles, (eastX, eastY), nothing)
-            if east === nothing
-                return false
-            end
-            push!(neighbors, east)
-        end
-
-        southY = state.currentTile.y - 1
-        if southY >= 1
-            southX = state.currentTile.x
-            south = get(availableTiles, (southX, southY), nothing)
-            if south === nothing
-                return false
-            end
-            push!(neighbors, south)
-        end
-
-        westX = state.currentTile.x - 1
-        if westX >= 1
-            westY = state.currentTile.y
-            west = get(availableTiles, (westX, westY), nothing)
-            if west === nothing
-                return false
-            end
-            push!(neighbors, west)
-        end
-
-        return true
-    end
 
     foundEnd = false
 
-    while isempty(state.frontier) == false || state.postponed
-        if state.postponed == true
-            state.postponed = false
+    while isempty(pathfindingState.frontier) == false || pathfindingState.postponed
+        if pathfindingState.postponed == true
+            pathfindingState.postponed = false
         else
-            state.currentTile::MapTile, _ = dequeue_pair!(state.frontier)
+            pathfindingState.currentTile::MapTile, _ = dequeue_pair!(pathfindingState.frontier)
         end
 
-        if state.currentTile === state.endTile
+        if pathfindingState.currentTile === pathfindingState.endTile
             foundEnd = true
             break
         end
-        @assert DEBUG_CoordinateOnlyCompare(state.currentTile, state.endTile) == false "Coordinates matched, ref didn't"
+        @assert DEBUG_CoordinateOnlyCompare(pathfindingState.currentTile, pathfindingState.endTile) == false "Coordinates matched, ref didn't"
 
-        neighborTilesExist = AStar_OPT1_GetNeighbors!()
+        neighborTilesExist = AStar_OPT1_GetNeighbors!(w, neighbors, pathfindingState)
         # This means "The Tile exists, but we haven't received it from the master core yet.
         if neighborTilesExist == false
             return nothing
         end
 
         for neighbor::MapTile in neighbors
-            newCost = state.costSoFar[state.currentTile] + neighbor.costToReach
+            newCost = pathfindingState.costSoFar[pathfindingState.currentTile] + neighbor.costToReach
 
-            if !haskey(state.costSoFar, neighbor) || newCost < state.costSoFar[neighbor]
-                state.costSoFar[neighbor] = newCost
-                priority = newCost + heuristicBooster * _heuristic(neighbor, state.endTile)
-                state.frontier[neighbor] = priority
-                state.cameFrom[neighbor] = state.currentTile
+            if !haskey(pathfindingState.costSoFar, neighbor) || newCost < pathfindingState.costSoFar[neighbor]
+                pathfindingState.costSoFar[neighbor] = newCost
+                priority = newCost + heuristicBooster * _heuristic(neighbor, pathfindingState.endTile)
+                pathfindingState.frontier[neighbor] = priority
+                pathfindingState.cameFrom[neighbor] = pathfindingState.currentTile
             end
         end
     end
 
     @assert foundEnd == true "Didn't find end, but got to the ConstructPath part regardless. Worker had $(length(availableTiles)) tiles to work with"
 
-    return ConstructPath(state.endTile, state.startTile, state.cameFrom)
+    return ConstructPath(pathfindingState.endTile, pathfindingState.startTile, pathfindingState.cameFrom)
 end
 
 
