@@ -852,19 +852,15 @@ end
 
 
 function OPT1_Master_HandleMapRequest(s::MasterState, source)
-
-    # TODO: Figure out this recv thing, which sould be a regular blocking one as the data is already there
-    # TODO: It's probably that it needs to be Recv! instead of recv!. Try later
     mapRequest_ref = Ref{OPT1_MapRequest}()
-    mapRequest_MPIRequest = MPI.Irecv!(mapRequest_ref, s.comm; source=source, tag=OPT1_MAP_REQUEST)
-    MPI.Wait(mapRequest_MPIRequest)
+    MPI.Recv!(mapRequest_ref, s.comm; source=source, tag=OPT1_MAP_REQUEST)
     mapRequest::OPT1_MapRequest = mapRequest_ref[]
     OPT1_Master_RespondToMapRequest(s, mapRequest, source)
-
 end
 
+
+
 function OPT1_Master_RespondToMapRequest(s::MasterState, mapRequest::OPT1_MapRequest, source)
-    # levelBefore = s.currentLevel
     OPT1_UpdateRecord(s.workerEntries[source], mapRequest)
     s.currentLevel = OPT1_TryLevelUp(s.workerEntries)
 
@@ -878,7 +874,6 @@ function OPT1_Master_RespondToMapRequest(s::MasterState, mapRequest::OPT1_MapReq
 
     req = MPI.Isend(supplementMapTiles, s.comm, dest=source, tag=OPT1_MAP_SUPPLEMENT)
     push!(s.iSendRequests, req)
-    # println("Master Core sent a map supplement with $(length(supplementMapTiles)) tiles over to worker $source")
 end
 
 
@@ -922,6 +917,8 @@ function OPT1_Master_AllInitialPathsAreReceived(workerEntries::Array{OPT1_Worker
 end
 
 
+
+
 function OPT1_Master_TryCreatingBeautificationJobs(s::MasterState)
 
     #= --- The recipe for creating Beautification Jobs
@@ -948,9 +945,6 @@ function OPT1_Master_TryCreatingBeautificationJobs(s::MasterState)
                 if jobId == previouslyMadeBeautificationJob
                     jobWasAlreadyCreatedBefore = true
                 end
-                # else
-                # println("Job $jobId was not the same as $previouslyMadeBeautificationJob")
-                # end
             end
             if jobWasAlreadyCreatedBefore
                 continue
@@ -1029,6 +1023,8 @@ function OPT1_Master_TryCreatingBeautificationJobs(s::MasterState)
 end
 
 
+
+
 function OPT1_Master_HandleIncomingSolvedPath(s::MasterState, status::MPI.MPI_Status, source, tag)
     # Receive path over MPI. Status guaranteed that something is present.
     incomingPathSize = MPI.Get_count(status, MapTile)
@@ -1084,6 +1080,8 @@ end
 
 
 
+
+
 function OPT1_Master_TrySendingBeautificationJobs(s::MasterState)
     while true
         mustSendBeautificationJob::Bool = !isempty(s.workersReadyToBeautify) && !isempty(s.beautificationJobsToSolve)
@@ -1129,7 +1127,6 @@ end
 
 
 function OPT1_WorkerCore(comm, nranks, rank, masterCore)
-    # TODO: Measure how many beautification jobs each worker does, worst case, best case, average case. Add to benchmark
     T_startTime = time()
     w::WorkerState = OPT1_Worker_ReceiveInitialMapDataAndJobs(comm, rank)
     w.bench.startTime = T_startTime
@@ -1229,6 +1226,9 @@ function OPT1_Worker_ReceiveAndProcessMapSupplement!(w::WorkerState)
     end
     w.bench.secondsProcessingIncomingMapSupplements += time() - T_startOfProcessingMapSupplement
 end
+
+
+
 
 
 function OPT1_Worker_BeautificationPhase(w::WorkerState)
@@ -1512,6 +1512,8 @@ function AStar_OPT1_GetNeighbors!(wState::WorkerState, neighbors::Array{MapTile}
 
     return true
 end
+
+
 
 
 function OPT1_CustomAStar(w::WorkerState, pathfindingState)::Union{Array{MapTile},Nothing}
