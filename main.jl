@@ -43,13 +43,24 @@ from non-work packages being sent over MPI.
 
 
 #= Run with
-include("main.jl"); main_OPT1_RunConfig(_, _);
+include("main.jl"); main_OPT1_SingleRun(_, _);
 =#
-function main_OPT1_RunConfig(workerCount, mazeXY)
+function main_OPT1_SingleRun(workerCount, mazeXY)
     println("Starting the Run with config[workerCount: $workerCount, mazeXY: $mazeXY]")
     if (workerCount < 1)
         error("Need minimum 1 worker to run this")
     end
+    config = include("config.jl")
+
+    path = config.PATH_SingleRun
+    mkpath(path)
+    for file in readdir(path, join=true)
+        if isfile(file)
+            rm(file)
+        end
+    end
+    println("Cleared the old benchmarking data in $path")
+
 
     code = quote
         using MPI
@@ -78,7 +89,8 @@ function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
     Clear()
     println("Starting the Benchmarking Run A")
 
-    path = joinpath("Benchmarks", "RunA")
+    config = include("config.jl")
+    path = config.PATH_BenchmarkingRun_A
     mkpath(path)
     for file in readdir(path, join=true)
         if isfile(file)

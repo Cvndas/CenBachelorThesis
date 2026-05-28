@@ -39,6 +39,9 @@ mutable struct BenchmarkData_WorkerCore
     rawComputationSeconds_Beautify::Float64
     numberOfBeautificationJobsCompleted::Int
 
+    timeOfFinishingInitialJob::Float64
+    timeOfReceivingBeauticationJob::Float64
+
 
     function BenchmarkData_WorkerCore(workerRank::Int)::BenchmarkData_WorkerCore
         new(
@@ -65,6 +68,9 @@ mutable struct BenchmarkData_WorkerCore
             #
             -0, # Raw copmutation seconds, beautify
             0,
+            #
+            0, # Finishing initial job
+            -99, # receiving beautification job
         )
     end
 end
@@ -101,6 +107,7 @@ mutable struct BenchmarkData_MasterCore
     finalSize::Int
 
     finalLevel::Int
+    numberOfTimesPriorityWorkerWasChosenForBeautification::Int
 
 
     function BenchmarkData_MasterCore(mapName::String, workerCount::Int, mapSize::Int, initialMapDeliverySize::Int)::BenchmarkData_MasterCore
@@ -128,6 +135,7 @@ mutable struct BenchmarkData_MasterCore
             -99, # finalSize
             #
             -99, #final Level
+            0,
         )
     end
 
@@ -181,29 +189,32 @@ end
 
 
 
-function OPT1_AverageMasterBenchmarkData(datas::Vector{BenchmarkData_MasterCore})
-    if length(datas) == 0
-        error("Tried to average a master benchmark vector of 0 elements")
-    end
-    if length(datas) == 1
-        return datas[1]
-    end
+# function OPT1_AverageMasterBenchmarkData(datas::Vector{BenchmarkData_MasterCore})
+#     if length(datas) == 0
+#         error("Tried to average a master benchmark vector of 0 elements")
+#     end
+#     if length(datas) == 1
+#         return datas[1]
+#     end
 
-    warmupDiscarded::Vector{BenchmarkData_MasterCore} = view(datas, 2:length(datas))
-    firstEntry::BenchmarkData_MasterCore = warmupDiscarded[1]
+#     warmupDiscarded::Vector{BenchmarkData_MasterCore} = view(datas, 2:length(datas))
+#     firstEntry::BenchmarkData_MasterCore = warmupDiscarded[1]
 
-    # Things that are constant
-    averaged = BenchmarkData_MasterCore(firstEntry.mapName, firstEntry.workerCount, firstEntry.totalMapSize, firstEntry.initialMapDeliverySize)
+#     # Things that are constant
+#     averaged = BenchmarkData_MasterCore(firstEntry.mapName, firstEntry.workerCount, firstEntry.totalMapSize, firstEntry.initialMapDeliverySize)
 
-    all_firstWorkerIdToCompleteSecondInitialPath::Vector{Float64} = [Float64(w.firstWorkerIdToCompleteSecondInitialPath) for w in warmupDiscarded]
-    averaged.firstWorkerIdToCompleteSecondInitialPath = Int(mean(all_firstWorkerIdToCompleteSecondInitialPath))
+#     all_firstWorkerIdToCompleteSecondInitialPath::Vector{Float64} = [Float64(w.firstWorkerIdToCompleteSecondInitialPath) for w in warmupDiscarded]
+#     averaged.firstWorkerIdToCompleteSecondInitialPath = Int(mean(all_firstWorkerIdToCompleteSecondInitialPath))
 
-    all_lastWorkerIdToCompleteSecondInitialPath::Vector{Float64} = [Float64(w.lastWorkerIdToCompleteSecondInitialPath) for w in warmupDiscarded]
-    averaged.lastWorkerIdToCompleteSecondInitialPath = Int(mean(all_lastWorkerIdToCompleteSecondInitialPath))
-    # TODO: The remaining values 
+#     all_lastWorkerIdToCompleteSecondInitialPath::Vector{Float64} = [Float64(w.lastWorkerIdToCompleteSecondInitialPath) for w in warmupDiscarded]
+#     averaged.lastWorkerIdToCompleteSecondInitialPath = Int(mean(all_lastWorkerIdToCompleteSecondInitialPath))
+#     # TODO: The remaining values 
+
+#     all_secondsToSendInitialPathsAndJobsToAllWorkers::Vector{Float64} = [Float64(w.secondsToSendInitialPathsAndJobsToAllWorkers) for w in warmupDiscarded]
+#     averaged.secondsToSendInitialPathsAndJobsToAllWorkers = Float64(mean(all_secondsToSendInitialPathsAndJobsToAllWorkers))
 
 
-end
+# end
 
 
 
@@ -262,6 +273,8 @@ struct OPT1_BenchmarkingReportStruct
 
     st_seconds
     numberOfBeautificationPathsSolved_BWA
+
+    numberOfTimesPriorityWorkerWasChosenForBeautification
 end
 
 function OPT1_AverageBenchmarkingReportStructs(reportStructs::Vector{OPT1_BenchmarkingReportStruct})::OPT1_BenchmarkingReportStruct
@@ -312,7 +325,9 @@ function OPT1_AverageBenchmarkingReportStructs(reportStructs::Vector{OPT1_Benchm
         mean(r.st_cost for r in reportStructs),
         #
         mean(r.st_seconds for r in reportStructs),
-        BWA_Average([r.numberOfBeautificationPathsSolved_BWA for r in reportStructs])
+        BWA_Average([r.numberOfBeautificationPathsSolved_BWA for r in reportStructs]),
+        #
+        mean(r.numberOfTimesPriorityWorkerWasChosenForBeautification for r in reportStructs)
     )
 end
 
@@ -320,6 +335,74 @@ end
 
 function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct)::String
     r = reportStruct
+    percentageOfTimePriorityWorkerWasChosen = 100 / Float64(r.workerCount) * Float64(r.numberOfTimesPriorityWorkerWasChosenForBeautification)
+
+    # First time I'm ever using reflection. Now I know why this is useful
+    bottleneckExclusions = ["st_cost", "RandomMap", "numberOfTimesPriorityWorkerWasChosen",
+        "numberOfTimesNewMapDataWasRequested", "numberOfBeautificationPathsSolved",
+        "secondsFromReceivingJobToHavingSentBeautifiedPaths",
+        "secondsFromStartToHavingReceivedAllInitialPaths",
+        "secondsFromStartToHavingReceivedAllBeautifiedPaths",
+        "st_seconds",]
+    potentialBottlenecks = ""
+    allFloatValues = Vector{Float64}()
+    averageBottleneckValue = 0
+    for fieldName in fieldnames(typeof(r))
+        skip = false
+        for exclusion in bottleneckExclusions
+            if occursin(exclusion, string(fieldName))
+                skip = true
+                break
+            end
+        end
+        if skip
+            continue
+        end
+
+        fieldValue = getfield(r, fieldName)
+        if fieldValue isa Float64
+            push!(allFloatValues, fieldValue)
+        elseif fieldValue isa BestWorstAverage
+            push!(allFloatValues, fieldValue.bestVal)
+            push!(allFloatValues, fieldValue.worstVal)
+            push!(allFloatValues, fieldValue.averageVal)
+        end
+    end
+
+    averageBottleneckValue = mean(allFloatValues)
+    bottleneckThreshold = averageBottleneckValue
+
+    for fieldName in fieldnames(typeof(r))
+        skip = false
+        for exclusion in bottleneckExclusions
+            if occursin(exclusion, string(fieldName))
+                skip = true
+                break
+            end
+        end
+        if skip
+            continue
+        end
+
+        fieldValue = getfield(r, fieldName)
+        if fieldValue isa Float64
+            if fieldValue > bottleneckThreshold
+                potentialBottlenecks *= "[bottleneck] $fieldName: $fieldValue\n"
+            end
+        elseif fieldValue isa BestWorstAverage
+            for bwaFieldName in fieldnames(typeof(fieldValue))
+                bwaValue = getfield(fieldValue, bwaFieldName)
+                if bwaValue isa Float64
+                    if bwaValue > bottleneckThreshold
+                        potentialBottlenecks *= "[bottleneck] $fieldName:: $bwaFieldName: $bwaValue\n"
+                    end
+                end
+            end
+
+        end
+    end
+
+
     # TODO: Total time not doing raw computation (summing waiting and non-waiting together)
     report::String = "
         +++MASTER REPORT FOR [$(r.mapName)] WITH $(r.workerCount) WORKERS+++
@@ -357,17 +440,21 @@ function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct):
         Lucky Worker $(r.secondsSpentWaitingForMapDataToComeIn_BWA.bestId) had to wait $(r.secondsSpentWaitingForMapDataToComeIn_BWA.bestVal) seconds for map data to come in
         On average a worker had to wait for $(r.secondsSpentWaitingForMapDataToComeIn_BWA.averageVal) seconds for map data to come in
 
+        | Raw computation on the initial paths
         Unlucky worker $(r.rawComputationSeconds_Initial_BWA.worstId) spent $(r.rawComputationSeconds_Initial_BWA.worstVal) seconds of raw computation time on the Initial pathfinding
         Lucky worker $(r.rawComputationSeconds_Initial_BWA.bestId) spent $(r.rawComputationSeconds_Initial_BWA.bestVal) seconds of raw computation time on the Initial pathfinding
         On average, a worker spent $(r.rawComputationSeconds_Initial_BWA.averageVal) seconds of raw computation time on Initial pathfindign
 
+        | Raw computation on the beautify paths
         ~Unlucky~ worker $(r.rawComputationSeconds_Beautify_BWA.worstId) spent $(r.rawComputationSeconds_Beautify_BWA.worstVal) seconds of raw computation time on the Beautify pathfinding
         ~Lucky~ worker $(r.rawComputationSeconds_Beautify_BWA.bestId) spent $(r.rawComputationSeconds_Beautify_BWA.bestVal) seconds of raw computation time on the Beautify pathfinding
         On average, a worker spent $(r.rawComputationSeconds_Beautify_BWA.averageVal) seconds of raw computation time on beautify pathfindign
 
+        | Number of beautification paths solved per worker
         ~Unlucky~ worker $(r.numberOfBeautificationPathsSolved_BWA.worstId) solved $(r.numberOfBeautificationPathsSolved_BWA.worstVal) beautification paths
         ~Lucky~ worker $(r.numberOfBeautificationPathsSolved_BWA.bestId) solved $(r.numberOfBeautificationPathsSolved_BWA.bestVal) beautification paths
         On average, a worker solved $(r.numberOfBeautificationPathsSolved_BWA.averageVal) beautification paths
+
 
         | Worker job completion: Initial paths
         Unlucky worker $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.worstId) took $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.worstVal) seconds to solve initial path after receiving job
@@ -379,6 +466,7 @@ function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct):
         Lucky worker $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.bestId) took $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.bestVal) seconds to solve Beautified path after receiving initial job
         On average a worker spent $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.averageVal) seconds to solve the Beautified path after receiving initial job 
 
+        | Worker: Solving beautified path(s) after receiving first beautified path
         Unlucky worker $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.worstId) took $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.worstVal) seconds to solve beautified path after receiving beautification job
         Lucky worker $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.bestId) took $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.bestVal) seconds to solve beautified path after receiving beautification job
         On average, a worker spent $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.averageVal) seconds to solve the beautification path after receiving the beautification job
@@ -387,7 +475,7 @@ function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct):
         Lucky worker $(r.waitingForBeautificationJobAfterSolvingInitial_BWA.bestId) spent $(r.waitingForBeautificationJobAfterSolvingInitial_BWA.bestVal) seconds waiting for beautification job after solving initial
         On average, a worker spent $(r.waitingForBeautificationJobAfterSolvingInitial_BWA.averageVal) seconds waiting for beautification job after solving initial
 
-
+        On average, a priority worker was chosen $(percentageOfTimePriorityWorkerWasChosen)% of the time.
 
         | Hyperparameter Configuration
         Initial map delivery size: $(r.initialMapDeliverySize)
@@ -399,6 +487,9 @@ function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct):
         | Master Overhead
         Seconds for offline prelude before sending initial jobs: $(r.secondsForOfflinePreludeBeforeSendingInitialJobs)
         Seconds to send initial paths and jobs to all workers: $(r.secondsToSendInitialPathsAndJobsToAllWorkers)
+
+        | Potential bottlenecks
+        $potentialBottlenecks
 
     "
 end
@@ -427,10 +518,10 @@ function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, work
     beautifiedJobTuples = [(w.secondsFromReceivingJobToHavingSentBeautifiedPaths, w.workerId) for w in workerDatas]
     beautifiedJob_BWA = BestWorstAverage(beautifiedJobTuples)
 
-    solvingBeautifyTuples = [(w.solvingBeautifiedPathAfterReceivingBeautificationJob, w.workerId) for w in workerDatas]
+    solvingBeautifyTuples = [(w.solvingBeautifiedPathAfterReceivingBeautificationJob, w.workerId) for w in workerDatas if w.timeOfReceivingBeauticationJob > -1]
     solvingBeautify_BWA = BestWorstAverage(solvingBeautifyTuples)
 
-    waitingBeautifyTuples = [(w.waitingForBeautificationJobAfterSolvingInitial, w.workerId) for w in workerDatas]
+    waitingBeautifyTuples = [(w.waitingForBeautificationJobAfterSolvingInitial, w.workerId) for w in workerDatas if w.waitingForBeautificationJobAfterSolvingInitial > -1]
     waitingBeautify_BWA = BestWorstAverage(waitingBeautifyTuples)
 
     rawInitialTuples = [(w.rawComputationSeconds_Initial, w.workerId) for w in workerDatas]
@@ -483,7 +574,9 @@ function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, work
         stCost,
         #
         stSeconds,
-        beautificationPathsSolved_BWA
+        beautificationPathsSolved_BWA,
+        #
+        m.numberOfTimesPriorityWorkerWasChosenForBeautification
     )
 
     return reportStruct

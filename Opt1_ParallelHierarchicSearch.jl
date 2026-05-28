@@ -173,7 +173,7 @@ mutable struct MasterState
     benchmarkData_Master::BenchmarkData_MasterCore
     iSendRequests::Vector{MPI.Request}
 
-    beautificationJobsToSolve::Deque{Tuple{OPT1_Job,Vector{Int}}}
+    beautificationJobsToSolve::Deque{Tuple{OPT1_Job,Vector{Int}}} # Vector of high priority workers
     workersReadyToBeautify::Set{Int} # Int is the worker rank
 
     alreadyCreatedBeautificationJobs::Vector{Int}
@@ -464,10 +464,11 @@ end
 
 function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, mazeSizes, singleRun)
 
+    config = include("config.jl")
     if singleRun
-        path = joinpath("Benchmarks", "SingleRun")
+        path = config.PATH_SingleRun
     else
-        path = joinpath("Benchmarks", "RunA")
+        path = config.PATH_BenchmarkingRun_A
     end
     mkpath(path)
 
@@ -1089,13 +1090,13 @@ function OPT1_Master_TrySendingBeautificationJobs(s::MasterState)
             theChosenOne = -1
             for priorityWorker in priorityWorkers
                 if priorityWorker in s.workersReadyToBeautify
-                    println("Chose a high priority worker: $priorityWorker, with all priority workers being $priorityWorkers")
+                    s.benchmarkData_Master.numberOfTimesPriorityWorkerWasChosenForBeautification += 1
                     theChosenOne = pop!(s.workersReadyToBeautify, priorityWorker)
+                    break
                 end
             end
             if theChosenOne < 0
                 theChosenOne = pop!(s.workersReadyToBeautify)
-                println("Priority worker wasn't available, so instead we took $theChosenOne to do the beautification job")
             end
 
             # println("master chose to send a beautification job to $workerToSolveBeautificationJob")
@@ -1133,13 +1134,11 @@ function OPT1_WorkerCore(comm, nranks, rank, masterCore)
     w.benchmarkData_Worker.timeOfReceivingInitialJob = time()
 
     OPT1_Worker_CompleteJobPair(w, OPT1_PATH_DELIVERY_INITIAL_1, OPT1_PATH_DELIVERY_INITIAL_2)
+    w.benchmarkData_Worker.timeOfFinishingInitialJob = time()
     w.benchmarkData_Worker.secondsFromReceivingJobToHavingSentInitialPaths = time() - w.benchmarkData_Worker.timeOfReceivingInitialJob
 
-    T_beforeReceivingBeautificationJob = time()
     # Now the second phase: Beautification, or map
 
-    # TODO: Remove unused
-    T_receivingBeautificationJob = time()
     OPT1_Worker_BeautificationPhase(w)
 
     # println("The worker is done with the beautification phase (did $(w.benchmarkData_Worker.numberOfBeautificationJobsCompleted) beautification jobs)")
@@ -1163,9 +1162,7 @@ function OPT1_WorkerCore(comm, nranks, rank, masterCore)
     # remainingJunkAvailable, remainingJunkStatus::MPI.Status = MPI.Iprobe(comm, MPI.Status, source=0, tag=MPI.ANY_TAG)
     # @assert remainingJunkAvailable == false "There was remaining junk in MPI for worker $rank with tag $(remainingJunkStatus.tag)"
 
-
-    w.benchmarkData_Worker.waitingForBeautificationJobAfterSolvingInitial = time() - T_beforeReceivingBeautificationJob
-    w.benchmarkData_Worker.solvingBeautifiedPathAfterReceivingBeautificationJob = time() - T_receivingBeautificationJob
+    w.benchmarkData_Worker.solvingBeautifiedPathAfterReceivingBeautificationJob = time() - w.benchmarkData_Worker.timeOfReceivingBeauticationJob
     w.benchmarkData_Worker.secondsFromReceivingJobToHavingSentBeautifiedPaths = time() - w.benchmarkData_Worker.timeOfReceivingInitialJob
 
     # Wait until we receive a benchmarking request from the master. We don't want to pollute MPI
@@ -1251,6 +1248,12 @@ function OPT1_Worker_BeautificationPhase(w::WorkerState)
 
 
         if tag == OPT1_BEAUTIFICATION_JOB_REQUEST
+            # Only measure the first time this happens
+            if w.benchmarkData_Worker.waitingForBeautificationJobAfterSolvingInitial < -1
+                w.benchmarkData_Worker.waitingForBeautificationJobAfterSolvingInitial = time() - w.benchmarkData_Worker.timeOfFinishingInitialJob
+                w.benchmarkData_Worker.timeOfReceivingBeauticationJob = time()
+            end
+
             OPT1_Worker_ReceiveBeautificationJobs!(w)
             # println("Worker $(w.rank) received a beautification job")
             hasBeautificationJob = true
