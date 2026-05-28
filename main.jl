@@ -47,8 +47,8 @@ include("main.jl"); main_OPT1_RunConfig(_, _);
 =#
 function main_OPT1_RunConfig(workerCount, mazeXY)
     println("Starting the Run with config[workerCount: $workerCount, mazeXY: $mazeXY]")
-    if (workerCount < 2)
-        error("Need minimum 2 workers to run this")
+    if (workerCount < 1)
+        error("Need minimum 1 worker to run this")
     end
 
     code = quote
@@ -91,7 +91,7 @@ function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
         include("CenAstar.jl")
         using .CenAstar
 
-        mazeSizes = [100, 250, 500, 750, 1000]
+        mazeSizes = [100, 250, 500, 750, 1000, 2000, 5000]
 
         MPI.Init()
         comm = MPI.Comm_dup(MPI.COMM_WORLD)
@@ -107,6 +107,7 @@ function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
     end
 
     # Here, specify what to run
+    run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
     run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
     run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
     run(`$(mpiexec()) -np 5 julia --project=. -e $code`)

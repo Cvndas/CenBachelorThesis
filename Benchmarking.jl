@@ -555,7 +555,7 @@ function OPT1_ProduceGraph_totalTime(reportStructs::Vector{OPT1_BenchmarkingRepo
     3. Beauty
     =#
     # stPoint
-    st_Xs = [1]
+    st_Xs = [0]
     st_Ys = [sortedReportStruct[1].st_seconds] * 1000
 
     sharedXs = []
@@ -598,8 +598,8 @@ function OPT1_ProduceGraph_pathCost(reportStructs::Vector{OPT1_BenchmarkingRepor
 
     sortedReportStruct = sort(reportStructs, by=x -> x.workerCount)
 
-    initialPoints = [(1, stCost)]
-    beautyPoints = [(1, stCost)]
+    initialPoints = [(0, stCost)]
+    beautyPoints = [(0, stCost)]
 
     for reportStruct::OPT1_BenchmarkingReportStruct in sortedReportStruct
         initialPoint = (reportStruct.workerCount, reportStruct.initialPathCost)
@@ -677,7 +677,9 @@ function OPT1_ProduceBenchmarkGraphs(folderPath::String)
     axesInFig = 0
 
     currentColumn = 1
-    for key in keys(mapNameAndFiles)
+    sortedKeys = sort(collect(keys(mapNameAndFiles)); by=key -> (length(key), key))
+    # for key in sort(collect(keys(mapNameAndFiles)))
+    for key in sortedKeys
 
         println("There are $(length(mapNameAndFiles[key])) entries for map $(key)")
         # For every map:

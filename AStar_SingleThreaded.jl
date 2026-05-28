@@ -68,8 +68,8 @@ function st_AStar(startTile::MapTile, endTile::MapTile, allTiles::Array{MapTile,
             newCost = costSoFar[currentTile] + neighbor.costToReach
             if !haskey(costSoFar, neighbor) || newCost < costSoFar[neighbor]
                 costSoFar[neighbor] = newCost
-                # priority = newCost + heuristicBooster * _heuristic(neighbor, endTile)
-                priority = newCost + _heuristic(neighbor, endTile)
+                priority = newCost + heuristicBooster * _heuristic(neighbor, endTile)
+                # priority = newCost + _heuristic(neighbor, endTile)
                 frontier[neighbor] = priority
                 cameFrom[neighbor] = currentTile
             end

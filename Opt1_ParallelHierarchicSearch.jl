@@ -14,6 +14,15 @@ Making the heuristic have more influence completely solves this. However, to kee
 to be applied to the single threaded version.
 =#
 
+#=
+Another important thing to take note of: It appears that the Astar in this implementation is FASTER than
+that of the single threaded astar. It's strange, as the single threaded astar has the benefit of a 2d array
+for maptiles that are indexed directly, while this implementation uses a dictionary.
+
+My only guess right now is that because the 2D array in the single threaded is the full thing, cache is 
+kind of getting destroyed? But even then, many of the mazes aren't even that big. It's strange.
+=#
+
 # Before the following todos, complete the current OPT1 benchmarking.
 
 
@@ -164,8 +173,8 @@ mutable struct MasterState
     benchmarkData_Master::BenchmarkData_MasterCore
     iSendRequests::Vector{MPI.Request}
 
-    beautificationJobsToSolve::Deque{OPT1_Job}
-    workersReadyToBeautify::Queue{Int} # Int is the worker rank
+    beautificationJobsToSolve::Deque{Tuple{OPT1_Job,Vector{Int}}}
+    workersReadyToBeautify::Set{Int} # Int is the worker rank
 
     alreadyCreatedBeautificationJobs::Vector{Int}
 
@@ -202,8 +211,8 @@ mutable struct MasterState
             Vector{MapTile}(),
             benchmarkData_Master,
             Vector{MPI.Request}(),
-            Deque{OPT1_Job}(),
-            Queue{Int}(),
+            Deque{Tuple{OPT1_Job,Vector{Int}}}(),
+            Set{Int}(),
             Vector{Int}()
         )
     end
@@ -912,7 +921,7 @@ function OPT1_Master_AllInitialPathsAreReceived(workerEntries::Array{OPT1_Worker
 end
 
 
-function OPT1_Master_TryBuildingBeautificationJobs(s::MasterState)
+function OPT1_Master_TryCreatingBeautificationJobs(s::MasterState)
 
     #= --- The recipe for creating Beautification Jobs
     The beautifcation paths:
@@ -999,13 +1008,17 @@ function OPT1_Master_TryBuildingBeautificationJobs(s::MasterState)
             end
 
             beautificationJob = OPT1_Job(beautyStartTile, beautyEndTile)
+            priorityWorkers = [rank]
+            if rank > 1
+                push!(priorityWorkers, rank - 1)
+            end
 
             # All the checks passed. Let's submit the job to the queue 
             jobWasCreated = true
             if highPriorityJob
-                pushfirst!(s.beautificationJobsToSolve, beautificationJob)
+                pushfirst!(s.beautificationJobsToSolve, (beautificationJob, priorityWorkers))
             else
-                push!(s.beautificationJobsToSolve, beautificationJob)
+                push!(s.beautificationJobsToSolve, (beautificationJob, priorityWorkers))
             end
             # println("Master created another beautification job")
 
@@ -1064,7 +1077,7 @@ function OPT1_Master_HandleIncomingSolvedPath(s::MasterState, status::MPI.MPI_St
         push!(s.workersReadyToBeautify, source)
         # println("Worker $source is ready to receive a beautification job")
     end
-    OPT1_Master_TryBuildingBeautificationJobs(s)
+    OPT1_Master_TryCreatingBeautificationJobs(s)
     OPT1_Master_TrySendingBeautificationJobs(s)
 end
 
@@ -1072,11 +1085,22 @@ function OPT1_Master_TrySendingBeautificationJobs(s::MasterState)
     while true
         mustSendBeautificationJob::Bool = !isempty(s.workersReadyToBeautify) && !isempty(s.beautificationJobsToSolve)
         if mustSendBeautificationJob
-            workerToSolveBeautificationJob = dequeue!(s.workersReadyToBeautify)
-            beautificationJobToSolve = popfirst!(s.beautificationJobsToSolve)
+            (beautificationJobToSolve, priorityWorkers) = popfirst!(s.beautificationJobsToSolve)
+            theChosenOne = -1
+            for priorityWorker in priorityWorkers
+                if priorityWorker in s.workersReadyToBeautify
+                    println("Chose a high priority worker: $priorityWorker, with all priority workers being $priorityWorkers")
+                    theChosenOne = pop!(s.workersReadyToBeautify, priorityWorker)
+                end
+            end
+            if theChosenOne < 0
+                theChosenOne = pop!(s.workersReadyToBeautify)
+                println("Priority worker wasn't available, so instead we took $theChosenOne to do the beautification job")
+            end
+
             # println("master chose to send a beautification job to $workerToSolveBeautificationJob")
 
-            OPT1_SendBeautificationJob(s, workerToSolveBeautificationJob, beautificationJobToSolve)
+            OPT1_SendBeautificationJob(s, theChosenOne, beautificationJobToSolve)
             continue
         else
             break
@@ -1427,7 +1451,6 @@ end
 #
 #
 function OPT1_CustomAStar(availableTiles::Dict{Tuple{Int32,Int32},MapTile}, maxX::Int32, maxY::Int32, state::WorkerPathfindingState)::Union{Array{MapTile},Nothing}
-
     config = include("Config.jl")
     heuristicBooster = config.HEURISTIC_BOOSTER
 
