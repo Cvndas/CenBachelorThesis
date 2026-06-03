@@ -37,7 +37,8 @@ include("MultithreadingPlayground.jl")
 
 export LoadMap
 export OPT1_ProduceBenchmarkGraphs
-export MultiThreadedTestingGround
+# export MultiThreadedTestingGround
+export PseudoWorkerCore
 
 #=
 This is a module file. Its purpose is to include the other files that make up CenAstar

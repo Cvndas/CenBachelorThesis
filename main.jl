@@ -253,11 +253,17 @@ function main_SingleThreadedAStar()
     println("Done with main().")
 end
 
+#= run with
+include("main.jl"); main_PseudoWorkerCore();
+ =#
+function main_PseudoWorkerCore()
+    CenAstar.PseudoWorkerCore()
+end
 
 #= run with
-include("main.jl"); main_SingleThreadedAStar();
+include("main.jl"); main_MultiThreadedTesting();
  =#
-function main_MultiThreadedTesting()
-    CenAstar.MultiThreadedTestingGround()
-end
+# function main_MultiThreadedTesting()
+#     CenAstar.MultiThreadedTestingGround()
+# end
 
