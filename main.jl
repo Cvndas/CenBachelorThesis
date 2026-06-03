@@ -41,11 +41,19 @@ from non-work packages being sent over MPI.
 # TODO: Only when this warmup stuff is implemented, check the benchmarks 
 # for suspicious values, to sniff out any potential benchmarking bugs
 
+function RunThreadcountAsserts()
+    threadCount = Threads.nthreads()
+    if threadCount != 1
+        error("Threadcount is not 1. Start julia with 1 thread when running this function")
+    end
+end
 
 #= Run with
 include("main.jl"); main_OPT1_SingleRun(_, _);
 =#
 function main_OPT1_SingleRun(workerCount, mazeXY)
+    Clear()
+    RunThreadcountAsserts()
     println("Starting the Run with config[workerCount: $workerCount, mazeXY: $mazeXY]")
     if (workerCount < 1)
         error("Need minimum 1 worker to run this")
@@ -81,12 +89,14 @@ function main_OPT1_SingleRun(workerCount, mazeXY)
     end
 
     # Here, specify what to run
-    run(`$(mpiexec()) -np $(workerCount+1) julia --project=. -e $code`)
+    run(`$(mpiexec()) -np $(workerCount+1) julia --project=. --threads=2 -e $code`)
 
 end
 
+
 function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
     Clear()
+    RunThreadcountAsserts()
     println("Starting the Benchmarking Run A")
 
     config = include("config.jl")
@@ -131,7 +141,7 @@ end
 include("main.jl"); main_MPI_ParallelHierarchicSearch_ProduceBenchmarkGraphs_RunA();
 =#
 function main_MPI_ParallelHierarchicSearch_ProduceBenchmarkGraphs_RunA()
-
+    RunThreadcountAsserts()
     runAFolder = joinpath("Benchmarks", "RunA")
     CenAstar.OPT1_ProduceBenchmarkGraphs(runAFolder)
 end
@@ -141,6 +151,7 @@ include("main.jl"); main_MPI_ParallelHierarchicSearch_HandcraftedMaps();
 =#
 function main_MPI_ParallelHierarchicSearch_HandcraftedMaps()
     Clear()
+    RunThreadcountAsserts()
     println("Started main()")
     code = quote
         using MPI
@@ -170,6 +181,7 @@ include("main.jl"); main_MPI_ParallelHierarchicSearch();
 =#
 function main_MPI_ParallelHierarchicSearch()
     Clear()
+    RunThreadcountAsserts()
     println("Started main()")
     code = quote
         using MPI
@@ -210,6 +222,7 @@ include("main.jl"); main_SingleThreadedAStar();
  =#
 function main_SingleThreadedAStar()
     Clear()
+    error("This whole code path is incompatible with many recent code changes and also irrelevant, as single-threaded A* been integrated into OPT1.")
     CenAstar.InitializeSeed()
 
     println("Entered main_SingleThreadedAStar()")
@@ -238,5 +251,13 @@ function main_SingleThreadedAStar()
 
     # fig = Figure()
     println("Done with main().")
+end
+
+
+#= run with
+include("main.jl"); main_SingleThreadedAStar();
+ =#
+function main_MultiThreadedTesting()
+    CenAstar.MultiThreadedTestingGround()
 end
 
