@@ -143,7 +143,9 @@ function ComputeMaze(mazeSize_X::Int32, mazeSize_Y::Int32)::ComputedMaze
     height = yMax
 
 
-    # // ::: -------------------------:: Making it all immutable ::------------------------- ::: // 
+
+
+    # // ::: -------------------------:: Making it all immutable ::------------------------- ::: //
     CreateImmutableMapTileArray = (mutableArray::Array{MutableMapTile}) -> [MapTile(mut.x, mut.y, costToReach=mut.costToReach) for mut::MutableMapTile in mutableArray]
 
     startTile = MakeImmutable(mutable_startTile)

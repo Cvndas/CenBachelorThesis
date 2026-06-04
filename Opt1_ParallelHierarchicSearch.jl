@@ -218,6 +218,73 @@ mutable struct MasterState
     end
 end
 
+# Multicore stuff for the initial solve
+mutable struct Worker_MT_Communication
+    isDone::Threads.Atomic{Bool}
+
+    pathATilesNecessary::Threads.Atomic{Bool}
+    pathATilesReady::Threads.Atomic{Bool}
+
+    pathBTilesNecessary::Threads.Atomic{Bool}
+    pathBTilesReady::Threads.Atomic{Bool}
+
+    productionTiles::Vector{MapTile}
+    lock_ProductionTiles::ReentrantLock
+
+    lock_MakeSupplementRequest::Threads.ReentrantLock
+    cond_MakeSupplementRequest::Threads.ReentrantLock
+
+    readyToStart::Threads.Atomic{Bool}
+
+    function Worker_MT_Communication()
+        supplementLock = ReentrantLock()
+        supplementCond = Condition(supplementLock)
+        new(
+            false,
+            #
+            Atomic{Bool}(false),
+            Atomic{Bool}(true),
+            #
+            Atomic{Bool}(false),
+            Atomic{Bool}(true),
+            #
+            [],
+            ReentrantLock(),
+            #
+            supplementLock,
+            supplementCond,
+            #
+            Atomic{Bool}(false),
+        )
+    end
+end
+
+
+
+mutable struct Worker_MT_PathState
+    isPathA::Bool
+    pathDone::Bool
+    pathTilesNecessary::Threads.Atomic{Bool}
+    pathTilesReady::Threads.Atomic{Bool}
+
+    function Worker_MT_PathState(isPathA::Bool, c::Worker_MT_Communication)
+
+        if isPathA
+            pathTilesNecessary = c.pathATilesNecessary
+            pathTilesReady = c.pathATilesReady
+        else
+            pathTilesNecessary = c.pathBTilesNecessary
+            pathTilesReady = c.pathBTilesReady
+        end
+
+        new(
+            isPathA,
+            false,
+            pathTilesNecessary,
+            pathTilesReady
+        )
+    end
+end
 
 
 mutable struct WorkerState
@@ -1134,7 +1201,12 @@ function OPT1_WorkerCore(comm, nranks, rank, masterCore)
     w.bench.startTime = T_startTime
     w.bench.timeOfReceivingInitialJob = time()
 
-    OPT1_Worker_CompleteJobPair(w, OPT1_PATH_DELIVERY_INITIAL_1, OPT1_PATH_DELIVERY_INITIAL_2)
+    # The single threaded initial job solve 
+    # OPT1_Worker_CompleteJobPair(w, OPT1_PATH_DELIVERY_INITIAL_1, OPT1_PATH_DELIVERY_INITIAL_2)
+
+    # The multithreaded initial job solve
+    OPT1_Worker_MT_SolveInitialJobs(w)
+
     w.bench.timeOfFinishingInitialJob = time()
     w.bench.secondsFromReceivingJobToHavingSentInitialPaths = time() - w.bench.timeOfReceivingInitialJob
 
@@ -1144,25 +1216,6 @@ function OPT1_WorkerCore(comm, nranks, rank, masterCore)
 
     # println("The worker is done with the beautification phase (did $(w.bench.numberOfBeautificationJobsCompleted) beautification jobs)")
 
-    # Draining the remaining map supplements that are in the mailbox, as the master core
-    # always stays ahead by initially sending another map supplement, which was
-    # transparent to the worker.
-
-    # remainingMapSupplementCount = 2
-    # for i in 1:remainingMapSupplementCount
-    #     mapSupplyStatus = MPI.Probe(comm, MPI.Status, source=0, tag=OPT1_MAP_SUPPLEMENT)
-
-    #     remainingMapSupplementCount += 1
-    #     incomingTilesSize = MPI.Get_count(mapSupplyStatus, MapTile)
-    #     mapSupplyDelivery = Array{MapTile,1}(undef, incomingTilesSize)
-    #     incomingSupplyRequest = MPI.Irecv!(mapSupplyDelivery, comm; source=0, tag=OPT1_MAP_SUPPLEMENT)
-    #     MPI.Wait(incomingSupplyRequest)
-    # end
-
-    # println("Worker drained all the remaining map supplements that were in the mailbox.")
-    # remainingJunkAvailable, remainingJunkStatus::MPI.Status = MPI.Iprobe(comm, MPI.Status, source=0, tag=MPI.ANY_TAG)
-    # @assert remainingJunkAvailable == false "There was remaining junk in MPI for worker $rank with tag $(remainingJunkStatus.tag)"
-
     w.bench.solvingBeautifiedPathAfterReceivingBeautificationJob = time() - w.bench.timeOfReceivingBeauticationJob
     w.bench.secondsFromReceivingJobToHavingSentBeautifiedPaths = time() - w.bench.timeOfReceivingInitialJob
 
@@ -1171,7 +1224,6 @@ function OPT1_WorkerCore(comm, nranks, rank, masterCore)
     # benchmarkingRequestStatus = MPI.Probe(comm, MPI.Status, source=masterCore, tag=OPT1_WORKER_BENCHMARK_REQUEST)
 
     # benchmarkingRequestBuffer_ref = Ref{OPT1_WorkerBenchmarkingDataRequest}()
-
 
     benchmarkingRequestBuffer = Vector{Int64}
     benchmarkingRequestBuffer = MPI.recv(comm; source=masterCore, tag=OPT1_WORKER_BENCHMARK_REQUEST)
@@ -1257,6 +1309,15 @@ function OPT1_Worker_BeautificationPhase(w::WorkerState)
             # println("Worker $(w.rank) received a beautification job")
             hasBeautificationJob = true
 
+            #= 
+            Interesting fact:
+            Due to the "Always One Step Ahead" optimization for the master core,
+                when a worker enters this function, this supplement, which was not actually
+                requested by the worker, is the first thing that will be read,
+                as it was already sitting in the queue, whereas the beautification job
+                still needs to be sent. This also ensures that during beautification, the chance
+                that a worker needs to request more data is even smaller
+            =#
         elseif tag == OPT1_MAP_SUPPLEMENT
             OPT1_Worker_ReceiveAndProcessMapSupplement!(w)
 
@@ -1376,6 +1437,95 @@ function OPT1_Worker_CompleteBeautyJob(w::WorkerState)
         end
     end
 end
+
+
+
+
+function OPT1_Worker_MT_SolveInitialJobs(w::WorkerState)
+    c = Worker_MT_Communication()
+
+    @assert Threads.nthreads() > 1 "Didn't have enough threads for MT_SolveInitialJobs(): $(Threads.nthreads())"
+
+    # T_StartingMPIThread = time()
+    @spawn OPT1_Worker_MT_MPIThread(w, c)
+
+
+    println("$(w.rank) entered MT_SolveInitialJobs()")
+    error("TODO: Implement the rest tomorrow, based on the pseudo implementation")
+end
+
+
+
+function OPT1_Worker_MT_MPIThread(w::WorkerState, c::Worker_MT_Communication)
+    lock(c.lock_MakeSupplementRequest)
+    c.readyToStart[] = true
+    waitingForSupplement_A = false
+    waitingForSupplement_B = false
+    while true
+        isBusyWaiting = false
+        while waitingForSupplement_A || waitingForSupplement_B
+            # If NOT both, we can do a blocking read. We don't have to busy wait
+            if !(waitingForSupplement_A && waitingForSupplement_B)
+                isBusyWaiting = false
+            end
+
+            # TODO: Function for doing this processing for either path. Only thing that's different is the
+            # setting of the boolean waitingForSupplement_X that comes after.
+            if waitingForSupplement_A
+                # TODO: MPI Iprobe thing. 
+                localProductionTiles::Vector{MapTile} = OPT1_Worker_MT_ReadIncomingMapSupplement()
+                lock(c.lock_ProductionTiles)
+                unlock(c.lock_ProductionTiles)
+                waitingForSupplement_A = false
+                # And AFTER receiving the data, we can lock the production tiles, update what it points to,
+                # and then notify the pathfinder thread
+            end
+            if waitingForSupplement_B
+                # TODO: Iprobe thing
+            end
+            if isBusyWaiting
+                yield()
+            end
+        end
+        error("TODO: Implement based on pseudo implementation")
+    end
+
+end
+
+
+
+function OPT1_Worker_MT_PathfindingThread(w::WorkerState)
+    a = Worker_MT_PathState(true, c)
+    b = Worker_MT_PathState(false, c)
+
+    while c.readyToStart[] == false
+        yield()
+    end
+    while true
+        OPT1_Worker_MT_RunPathfinding(w, a)
+        OPT1_Worker_MT_RunPathfinding(w, b)
+        bothDone = a.pathDone && b.pathDone
+        if bothDone
+            lock(c.lock_MakeSupplementRequest)
+            notify(c.cond_MakeSupplementRequest)
+            unlock(c.lock_MakeSupplementRequest)
+            println("MT Pathfinder: We're done!")
+            break
+        end
+    end
+
+    # TODO: Handle these benchmarking values when the alg is properly implemented
+    # T_waitingForMpiThreadToGetReady = time() - T_StartingMPIThread
+    # Debug.Log("Waiting for the MPI thread to get ready took $(T_waitingForMpiThreadToGetReady) seconds. TODO: Put into the benchmarks")
+
+    error("TODO: Implement based on pseudo implementation")
+end
+
+
+function OPT1_Worker_MT_RunPathfinding(w::WorkerState, p::Worker_MT_PathState)
+    error("TODO: Implement based on pseudo implementation")
+end
+
 
 
 

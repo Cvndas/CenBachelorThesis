@@ -4,7 +4,7 @@ using Base.Threads
 
 function SleepRandomForThreadTesting()
     min = 0.000005
-    max = 0.05
+    max = 0.00005
     sleepTime = rand() * (max - min) + min
     sleep(sleepTime)
     # println("Done sleeping")
@@ -12,8 +12,9 @@ end
 
 pathfindingA_Count = 0
 pathfindingB_Count = 0
-pathfindingA_Necessary = rand(10:100)
-pathfindingB_Necessary = rand(30:130)
+pathfindingA_Necessary = rand(1_00:10_00)
+pathfindingB_Necessary = rand(3_00:13_00)
+
 function pseudo_Pathfinding_PathA()
     global pathfindingA_Necessary
     global pathfindingA_Count
