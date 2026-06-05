@@ -1,5 +1,6 @@
 using MPI
 using DataStructures
+using Base.Threads
 # include("OPT1_WorkerEntry.jl")
 
 
@@ -229,32 +230,32 @@ mutable struct Worker_MT_Communication
     pathBTilesReady::Threads.Atomic{Bool}
 
     productionTiles::Vector{MapTile}
-    lock_ProductionTiles::ReentrantLock
+    lock_ProductionTiles::Threads.ReentrantLock
 
     lock_MakeSupplementRequest::Threads.ReentrantLock
-    cond_MakeSupplementRequest::Threads.ReentrantLock
+    cond_MakeSupplementRequest::Threads.Condition
 
     readyToStart::Threads.Atomic{Bool}
 
     function Worker_MT_Communication()
-        supplementLock = ReentrantLock()
-        supplementCond = Condition(supplementLock)
+        supplementLock = Threads.ReentrantLock()
+        supplementCond = Threads.Condition(supplementLock)
         new(
-            false,
+            Threads.Atomic{Bool}(false),
             #
-            Atomic{Bool}(false),
-            Atomic{Bool}(true),
+            Threads.Atomic{Bool}(false),
+            Threads.Atomic{Bool}(true),
             #
-            Atomic{Bool}(false),
-            Atomic{Bool}(true),
+            Threads.Atomic{Bool}(false),
+            Threads.Atomic{Bool}(true),
             #
             [],
-            ReentrantLock(),
+            Threads.ReentrantLock(),
             #
             supplementLock,
             supplementCond,
             #
-            Atomic{Bool}(false),
+            Threads.Atomic{Bool}(false),
         )
     end
 end
@@ -568,7 +569,7 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, mazeSizes, 
             end
         end
         if rank == 0
-            # println("The AVERAGE report:")
+            println("The AVERAGE report:")
             averageReport = OPT1_AverageBenchmarkingReportStructs(reportStructs)
             println(OPT1_GenerateReportString(averageReport))
 
@@ -585,8 +586,6 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, mazeSizes, 
             end
 
             println("Completed the benchmarking for a maze of size $(mazeSizeX)x$(mazeSizeY) with $(nranks) processors")
-
-
         end
     end
 end
@@ -657,6 +656,7 @@ function OPT1_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::Stri
             tag = MPI.Get_tag(status)
             # // ::: -------------------------:: Handling a Map supply request ::------------------------- ::: // 
             if tag == OPT1_MAP_REQUEST
+                # println("Master core: Received a map supplement request")
                 OPT1_Master_HandleMapRequest(s, source)
                 s.benchmarkData_Master.timesAMapSupplementWasRequested += 1
                 # ::: -------------------------:: Handling an incoming path ::------------------------- ::: // 
@@ -668,6 +668,7 @@ function OPT1_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::Stri
                     &&
                     OPT1_Master_AllInitialPathsAreReceived(s.workerEntries)
                 )
+                    println("MASTER: Received all initial pahts")
                     s.benchmarkData_Master.secondsFromStartToHavingReceivedAllInitialPaths = time() - s.benchmarkData_Master.startTime
                 end
             else
@@ -742,6 +743,7 @@ function OPT1_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::Stri
     s.benchmarkData_Master.finalLevel = s.currentLevel
     s.benchmarkData_Master.finalSize = s.horizontalExtensionSize * s.verticalEstimationSize
 
+    println("Ok, gonna do a sigle threaded solve now to compare yuh yuh ")
     # Limitation here is that maxX and maxY have to be different from previous mazes for this to be correct
     stSeconds = @elapsed stSolution = st_AStar(s.computedMaze.startTile, s.computedMaze.endTile, s.computedMaze.allTiles)
     stCost = ComputePathCost(stSolution)
@@ -778,8 +780,14 @@ function OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMa
     # verticalEstimationSize_Default::Int32 = 16
     # horizontalExtensionSize_Default::Int32 = 16
 
-    verticalEstimationSize_Default::Int32 = 32
-    horizontalExtensionSize_Default::Int32 = 16
+    # For testing multithreading
+    verticalEstimationSize_Default::Int32 = 2
+    horizontalExtensionSize_Default::Int32 = 2
+
+    # So far, optimal
+    # verticalEstimationSize_Default::Int32 = 32
+    # horizontalExtensionSize_Default::Int32 = 16
+
 
     # verticalEstimationSize_Default::Int32 = 64
     # horizontalExtensionSize_Default::Int32 = 32
@@ -933,8 +941,13 @@ function OPT1_Master_RespondToMapRequest(s::MasterState, mapRequest::OPT1_MapReq
     OPT1_UpdateRecord(s.workerEntries[source], mapRequest)
     s.currentLevel = OPT1_TryLevelUp(s.workerEntries)
 
-    s.verticalEstimationSize = s.verticalEstimationSize_Default * (s.currentLevel * 3)
-    s.horizontalExtensionSize = s.horizontalExtensionSize_Default * (s.currentLevel * 3)
+    # Actual grows function
+    # s.verticalEstimationSize = s.verticalEstimationSize_Default * (s.currentLevel * 3)
+    # s.horizontalExtensionSize = s.horizontalExtensionSize_Default * (s.currentLevel * 3)
+
+    # Growth function to stress test the mechanisms
+    s.verticalEstimationSize = s.verticalEstimationSize_Default + s.currentLevel
+    s.horizontalExtensionSize = s.horizontalExtensionSize_Default + s.currentLevel
 
 
     sentMinMax::Array{Union{MinMaxY,Nothing}} = s.workerEntries[source].sentMinMax
@@ -1257,6 +1270,8 @@ function OPT1_Worker_ReceiveAndProcessMapSupplement!(w::WorkerState)
     availableTiles = w.availableTiles
     rank = w.rank
 
+    # I now notice that this doesn't make sense. This is always blocking, so it should just be a regular Probe()
+    # TODO: Fix that later.
     isMessageAvailable, mapSupplyStatus::MPI.Status = MPI.Iprobe(comm, MPI.Status, ; source=0, tag=OPT1_MAP_SUPPLEMENT)
     if isMessageAvailable == false
         T_waitingForDataToComeIn = time()
@@ -1442,59 +1457,100 @@ end
 
 
 function OPT1_Worker_MT_SolveInitialJobs(w::WorkerState)
+    println("DOINGA FRESH INITIAL PATH SOLVE")
     c = Worker_MT_Communication()
 
     @assert Threads.nthreads() > 1 "Didn't have enough threads for MT_SolveInitialJobs(): $(Threads.nthreads())"
 
     # T_StartingMPIThread = time()
     @spawn OPT1_Worker_MT_MPIThread(w, c)
-
-
     println("$(w.rank) entered MT_SolveInitialJobs()")
-    error("TODO: Implement the rest tomorrow, based on the pseudo implementation")
+    OPT1_Worker_MT_PathfindingThread(w, c)
+    println("$(w.rank) completed MT_SolveInitialJobs()")
 end
 
+function PATHFINDER_Println(content)
+    # println("PATHFINDER $content")
+end
 
+function MPI_Println(content)
+    # println("MPI THREAD $content")
+end
 
 function OPT1_Worker_MT_MPIThread(w::WorkerState, c::Worker_MT_Communication)
     lock(c.lock_MakeSupplementRequest)
     c.readyToStart[] = true
-    waitingForSupplement_A = false
-    waitingForSupplement_B = false
+    totalSupplementsHandled = 0
+    pendingSupplement_A = false
+    pendingSupplement_B = false
+    mapRequest_A = OPT1_MapRequest(w.jobAState.startTile, w.jobAState.endTile, true, false)
+    mapRequest_B = OPT1_MapRequest(w.jobBState.startTile, w.jobBState.endTile, true, false)
     while true
-        isBusyWaiting = false
-        while waitingForSupplement_A || waitingForSupplement_B
-            # If NOT both, we can do a blocking read. We don't have to busy wait
-            if !(waitingForSupplement_A && waitingForSupplement_B)
-                isBusyWaiting = false
-            end
 
-            # TODO: Function for doing this processing for either path. Only thing that's different is the
-            # setting of the boolean waitingForSupplement_X that comes after.
-            if waitingForSupplement_A
-                # TODO: MPI Iprobe thing. 
-                localProductionTiles::Vector{MapTile} = OPT1_Worker_MT_ReadIncomingMapSupplement()
-                lock(c.lock_ProductionTiles)
-                unlock(c.lock_ProductionTiles)
-                waitingForSupplement_A = false
-                # And AFTER receiving the data, we can lock the production tiles, update what it points to,
-                # and then notify the pathfinder thread
-            end
-            if waitingForSupplement_B
-                # TODO: Iprobe thing
-            end
-            if isBusyWaiting
-                yield()
+        mapSupplementsCombined = Vector{MapTile}()
+        A_wasWaiting = pendingSupplement_A == true
+        B_wasWaiting = pendingSupplement_B == true
+
+        if pendingSupplement_A || pendingSupplement_B
+            while true
+                mapSupplyStatus = MPI.Probe(w.comm, MPI.Status, source=0, tag=OPT1_MAP_SUPPLEMENT)
+                incomingTilesSize = MPI.Get_count(mapSupplyStatus, MapTile)
+                mapSupplyDelivery = Array{MapTile,1}(undef, incomingTilesSize)
+
+                MPI.Recv!(mapSupplyDelivery, w.comm; source=0, tag=OPT1_MAP_SUPPLEMENT)
+                totalSupplementsHandled += 1
+
+                append!(mapSupplementsCombined, mapSupplyDelivery)
+                if pendingSupplement_A == true
+                    pendingSupplement_A = false
+                else
+                    pendingSupplement_B = false
+                end
+
+                if !pendingSupplement_A && !pendingSupplement_B
+                    lock(c.lock_ProductionTiles)
+                    c.productionTiles = mapSupplementsCombined
+                    if A_wasWaiting
+                        c.pathATilesReady[] = true
+                    end
+                    if B_wasWaiting
+                        c.pathBTilesReady[] = true
+                    end
+                    unlock(c.lock_ProductionTiles)
+                    break
+                end
             end
         end
-        error("TODO: Implement based on pseudo implementation")
+
+        wait(c.cond_MakeSupplementRequest)
+        while (c.isDone[] == false && !c.pathATilesNecessary[] && !c.pathBTilesNecessary[])
+            println("There seems to have been a spurious wakeup") # TODO: Measure if this ever happens
+            wait(c.cond_MakeSupplementRequest)
+        end
+
+        if c.isDone[]
+            break
+        end
+
+        if c.pathATilesNecessary[]
+            MPI.Send(mapRequest_A, w.comm, dest=0, tag=OPT1_MAP_REQUEST)
+            # push!(w.iSendRequests, sendRequest)
+            pendingSupplement_A = true
+        end
+        if c.pathBTilesNecessary[]
+            MPI.Send(mapRequest_B, w.comm, dest=0, tag=OPT1_MAP_REQUEST)
+            # push!(w.iSendRequests, sendRequest)
+            pendingSupplement_B = true
+        end
     end
 
+    println("$(w.rank) MPI Thread is done. I served $totalSupplementsHandled supplements in the initial path!")
+    unlock(c.lock_MakeSupplementRequest)
 end
 
 
 
-function OPT1_Worker_MT_PathfindingThread(w::WorkerState)
+function OPT1_Worker_MT_PathfindingThread(w::WorkerState, c::Worker_MT_Communication)
     a = Worker_MT_PathState(true, c)
     b = Worker_MT_PathState(false, c)
 
@@ -1502,28 +1558,65 @@ function OPT1_Worker_MT_PathfindingThread(w::WorkerState)
         yield()
     end
     while true
-        OPT1_Worker_MT_RunPathfinding(w, a)
-        OPT1_Worker_MT_RunPathfinding(w, b)
-        bothDone = a.pathDone && b.pathDone
+        if a.pathDone == false
+            OPT1_Worker_MT_RunPathfinding(w, w.jobAState, c, a)
+        end
+        if b.pathDone == false
+            OPT1_Worker_MT_RunPathfinding(w, w.jobBState, c, b)
+        end
+        bothDone::Bool = a.pathDone && b.pathDone
         if bothDone
             lock(c.lock_MakeSupplementRequest)
+            c.isDone[] = true
             notify(c.cond_MakeSupplementRequest)
             unlock(c.lock_MakeSupplementRequest)
-            println("MT Pathfinder: We're done!")
             break
         end
     end
 
-    # TODO: Handle these benchmarking values when the alg is properly implemented
-    # T_waitingForMpiThreadToGetReady = time() - T_StartingMPIThread
-    # Debug.Log("Waiting for the MPI thread to get ready took $(T_waitingForMpiThreadToGetReady) seconds. TODO: Put into the benchmarks")
-
-    error("TODO: Implement based on pseudo implementation")
+    PATHFINDER_Println("Pathfinder: We're fully done with the pathfinding thread now")
 end
 
 
-function OPT1_Worker_MT_RunPathfinding(w::WorkerState, p::Worker_MT_PathState)
-    error("TODO: Implement based on pseudo implementation")
+function OPT1_Worker_MT_RunPathfinding(w::WorkerState, pathfindingState::WorkerPathfindingState, c::Worker_MT_Communication, p::Worker_MT_PathState)
+    if p.pathDone == false
+        while p.pathTilesReady[] == false
+            yield()
+        end
+
+
+        if p.pathTilesNecessary[]
+            lock(c.lock_ProductionTiles)
+            for suppliedTile::MapTile in c.productionTiles
+                @assert !haskey(w.availableTiles, (suppliedTile.x, suppliedTile.y)) "Worker $rank already had the tile $suppliedTile in its storage"
+                w.availableTiles[(suppliedTile.x, suppliedTile.y)] = suppliedTile
+            end
+            empty!(c.productionTiles)
+
+            unlock(c.lock_ProductionTiles)
+            p.pathTilesNecessary[] = false
+        end
+
+        pathfindingResult = OPT1_CustomAStar(w, pathfindingState)
+        if pathfindingResult !== nothing
+            p.pathDone = true
+            jobCompletionTag = if p.isPathA
+                OPT1_PATH_DELIVERY_INITIAL_1
+            else
+                OPT1_PATH_DELIVERY_INITIAL_2
+            end
+            OPT1_Worker_SendCompletedPath(pathfindingResult, jobCompletionTag, w.comm, w)
+        else
+            pathfindingState.postponed = true
+        end
+    end
+    if p.pathDone == false
+        lock(c.lock_MakeSupplementRequest)
+        p.pathTilesReady[] = false
+        p.pathTilesNecessary[] = true
+        notify(c.cond_MakeSupplementRequest)
+        unlock(c.lock_MakeSupplementRequest)
+    end
 end
 
 
@@ -1709,7 +1802,7 @@ function OPT1_CustomAStar(w::WorkerState, pathfindingState)::Union{Array{MapTile
         end
     end
 
-    @assert foundEnd == true "Didn't find end, but got to the ConstructPath part regardless. Worker had $(length(availableTiles)) tiles to work with"
+    @assert foundEnd == true "Didn't find end, but got to the ConstructPath part regardless. Worker had $(length(w.availableTiles)) tiles to work with"
 
     return ConstructPath(pathfindingState.endTile, pathfindingState.startTile, pathfindingState.cameFrom)
 end
