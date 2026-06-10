@@ -28,9 +28,9 @@ include("MakieRenderer.jl")
 include("AStar_Shared.jl")
 include("AStar_SingleThreaded.jl")
 include("MapTile_Functions.jl")
+include("PHS_Shared.jl")
 include("MPI_Naive_ParallelHierarchicSearch.jl")
 include("Opt1_ParallelHierarchicSearch.jl")
-include("PHS_Shared.jl")
 include("ST_ParallelHierarchicSearch.jl")
 include("MapBuilder/MapBuilder.jl")
 include("MultithreadingPlayground.jl")
@@ -39,6 +39,9 @@ export LoadMap
 export OPT1_ProduceBenchmarkGraphs
 # export MultiThreadedTestingGround
 export PseudoWorkerCore
+export RandomMazeSpecification
+export HandcraftedMazeSpecification
+export OPT1_RunConfig
 
 #=
 This is a module file. Its purpose is to include the other files that make up CenAstar

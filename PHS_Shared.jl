@@ -1,3 +1,28 @@
+struct RandomMazeSpecification
+    # seed::Int
+    width::Int32
+    height::Int32
+
+    function RandomMazeSpecification(width::Int32, height::Int32)
+        new(
+            width, height
+        )
+    end
+    function RandomMazeSpecification(width::Int64, height::Int64)
+        new(
+            Int32(width), Int32(height)
+        )
+    end
+
+end
+
+struct HandcraftedMazeSpecification
+    mazeName::String
+
+    function HandcraftedMazeSpecification(mazeName::String)
+        new(mazeName)
+    end
+end
 
 
 function _MoveOffWalls(straightLine::Array{MapTile,1}, originalIndex, minIndex, maxIndex)

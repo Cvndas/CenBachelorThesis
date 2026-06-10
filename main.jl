@@ -70,10 +70,14 @@ function main_OPT1_SingleRun(workerCount, mazeXY)
     println("Cleared the old benchmarking data in $path")
 
 
+
     code = quote
         using MPI
         include("CenAstar.jl")
         using .CenAstar
+
+        randomMazeSpec = RandomMazeSpecification($(mazeXY), $(mazeXY))
+        runConfig::OPT1_RunConfig = OPT1_RunConfig([randomMazeSpec], false, 1)
 
         MPI.Init()
         comm = MPI.Comm_dup(MPI.COMM_WORLD)
@@ -83,7 +87,7 @@ function main_OPT1_SingleRun(workerCount, mazeXY)
         processorName = MPI.Get_processor_name()
         # println("Hello from $processorName, I am process $rank of $nranks processes!")
 
-        CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, $([mazeXY]), true)
+        CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, runConfig)
 
         MPI.Finalize()
     end
@@ -164,6 +168,11 @@ function main_MPI_ParallelHierarchicSearch_HandcraftedMaps()
         rank = MPI.Comm_rank(comm)
         processorName = MPI.Get_processor_name()
         masterCore = 0
+
+        # TODO: Define a proper configuration object that I pass in, which includes maze size, 
+        # multithreading, maze type, etc. And build it inside of Entry() so that the code will
+        # actually have access to it. 
+        multithread = false
         println("Hello from $processorName, I am process $rank of $nranks processes!")
         # CenAstar.MPI_Naive_PhsEntry(comm, nranks, rank, host)
         CenAstar.OPT1_Entry(comm, nranks, rank, masterCore, true)

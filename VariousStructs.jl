@@ -19,7 +19,11 @@ struct MapTile
     function MapTile(x::Int32, y::Int32; costToReach=1)
         new(x, y, costToReach)
     end
+    function MapTile()
+        new(Int32(0), Int32(0), Int8(0))
+    end
 end
+
 
 function MakeImmutable(mutable::MutableMapTile)::MapTile
     return MapTile(mutable.x, mutable.y, costToReach=mutable.costToReach)

@@ -48,6 +48,8 @@ mutable struct BenchmarkData_WorkerCore
     secondsReceivingIncomingMapSupplements::Float64
     secondsProcessingIncomingMapSupplements::Float64
 
+    tilesReceivedWhenSolvingInitialPath::Int
+
 
     function BenchmarkData_WorkerCore(workerRank::Int)::BenchmarkData_WorkerCore
         new(
@@ -83,6 +85,8 @@ mutable struct BenchmarkData_WorkerCore
             #
             0, # seconds receiving incoming map supplements
             0, # seconds processing incoming map supplements
+            #,
+            -99 # tiles Received when solving initial path
         )
     end
 end
@@ -294,6 +298,8 @@ struct OPT1_BenchmarkingReportStruct
 
     secondsSpentReceivingIncomingMapSupplements_BWA
     secondsSpentProcessingIncomingMapSupplements_BWA
+
+    tilesReceivedWhenSolvingInitialPath_BWA
 end
 
 function OPT1_AverageBenchmarkingReportStructs(reportStructs::Vector{OPT1_BenchmarkingReportStruct})::OPT1_BenchmarkingReportStruct
@@ -353,7 +359,9 @@ function OPT1_AverageBenchmarkingReportStructs(reportStructs::Vector{OPT1_Benchm
         BWA_Average([r.secondsNotSpentDoingWorkInInitialPath_BWA for r in reportStructs]),
         #
         BWA_Average([r.secondsSpentReceivingIncomingMapSupplements_BWA for r in reportStructs]),
-        BWA_Average([r.secondsSpentProcessingIncomingMapSupplements_BWA for r in reportStructs])
+        BWA_Average([r.secondsSpentProcessingIncomingMapSupplements_BWA for r in reportStructs]),
+        #
+        BWA_Average([r.tilesReceivedWhenSolvingInitialPath_BWA for r in reportStructs])
     )
 end
 
@@ -483,11 +491,16 @@ function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct):
         ~Lucky~ worker $(r.numberOfBeautificationPathsSolved_BWA.bestId) solved $(r.numberOfBeautificationPathsSolved_BWA.bestVal) beautification paths
         On average, a worker solved $(r.numberOfBeautificationPathsSolved_BWA.averageVal) beautification paths
 
-
+        \e[32m
         | Worker job completion: Initial paths
         Unlucky worker $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.worstId) took $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.worstVal) seconds to solve initial path after receiving job
         Lucky worker $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.bestId) took $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.bestVal) seconds to solve initial path after receiving job
         On average a worker spent $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.averageVal) seconds to solve the initial path after receiving job 
+
+        | Worker job completion: Tiles received while solving initial paths
+        Unlucky worker $(r.tilesReceivedWhenSolvingInitialPath_BWA.worstId) received $(r.tilesReceivedWhenSolvingInitialPath_BWA.worstVal) while solving initial path.
+        Lucky worker $(r.tilesReceivedWhenSolvingInitialPath_BWA.bestId) received $(r.tilesReceivedWhenSolvingInitialPath_BWA.bestVal) while solving initial path.
+        On average, a worker received $(r.tilesReceivedWhenSolvingInitialPath_BWA.averageVal) tiles when solving the initial path
 
         | Worker job completion: Beautified paths
         Unlucky worker $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.worstId) took $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.worstVal) seconds to solve Beautified path after receiving initial job
@@ -524,6 +537,7 @@ function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct):
         Unlucky worker $(r.secondsSpentProcessingIncomingMapSupplements_BWA.worstId) spent $(r.secondsSpentProcessingIncomingMapSupplements_BWA.worstVal) seconds processing available map supplements
         Lucky worker $(r.secondsSpentProcessingIncomingMapSupplements_BWA.bestId) spent $(r.secondsSpentProcessingIncomingMapSupplements_BWA.bestVal) seconds processing available map supplements
         On average, a worker spent $(r.secondsSpentProcessingIncomingMapSupplements_BWA.averageVal) seconds processing available map supplements
+        \e[0m
 
 
         | Beautification paths solved by high-priority workers
@@ -596,6 +610,8 @@ function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, work
     secondsReceivingIncomingMapSupplements_Tuples = [(w.secondsReceivingIncomingMapSupplements, w.workerId) for w in workerDatas]
     secondsProcessingIncomingMapSupplements_Tuples = [(w.secondsProcessingIncomingMapSupplements, w.workerId) for w in workerDatas]
 
+    tilesReceivedWhenSolvingInitialPath_Tuples = [(w.tilesReceivedWhenSolvingInitialPath, w.workerId) for w in workerDatas]
+
     reportStruct = OPT1_BenchmarkingReportStruct(
         m.mapName,
         m.workerCount,
@@ -646,7 +662,9 @@ function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, work
         BestWorstAverage(secondsNotSpentDoingWorkInInitialPath_Tuples),
         #
         BestWorstAverage(secondsReceivingIncomingMapSupplements_Tuples),
-        BestWorstAverage(secondsProcessingIncomingMapSupplements_Tuples)
+        BestWorstAverage(secondsProcessingIncomingMapSupplements_Tuples),
+        #
+        BestWorstAverage(tilesReceivedWhenSolvingInitialPath_Tuples)
     )
 
 
