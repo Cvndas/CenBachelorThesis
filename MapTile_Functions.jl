@@ -49,7 +49,14 @@ function ConvertToBoostPad!(mapTile::MutableMapTile)
     mapTile.costToReach = PATHCOST_BoostPad
 end
 
-
+function FindExistingMapTile(x, y, existingTiles::Array{MutableMapTile})
+    for existingTile in existingTiles
+        if existingTile.x == x && existingTile.y == y
+            return existingTile
+        end
+    end
+    return nothing
+end
 
 
 

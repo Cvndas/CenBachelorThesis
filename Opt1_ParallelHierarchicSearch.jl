@@ -161,11 +161,11 @@ end
 mutable struct MasterState
    comm
    computedMaze::ComputedMaze
-   verticalEstimationSize::Int32
-   verticalEstimationSize_Default::Int32
+   verticalExtension::Int32
+   verticalExtension_Default::Int32
 
-   horizontalExtensionSize::Int32
-   horizontalExtensionSize_Default::Int32
+   horizontalExtension::Int32
+   horizontalExtension_Default::Int32
 
    workerEntries::Vector{OPT1_WorkerEntry}
    maxX::Int32
@@ -192,10 +192,10 @@ mutable struct MasterState
    function MasterState(
       comm,
       computedMaze,
-      verticalEstimationSize,
-      verticalEstimationSize_Default,
-      horizontalExtensionSize,
-      horizontalExtensionSize_Default,
+      verticalExtension,
+      verticalExtension_Default,
+      horizontalExtension,
+      horizontalExtension_Default,
       maxX,
       maxY,
       nranks,
@@ -206,10 +206,10 @@ mutable struct MasterState
    )
       new(comm,
          computedMaze,
-         verticalEstimationSize,
-         verticalEstimationSize_Default,
-         horizontalExtensionSize,
-         horizontalExtensionSize_Default,
+         verticalExtension,
+         verticalExtension_Default,
+         horizontalExtension,
+         horizontalExtension_Default,
          Vector{OPT1_WorkerEntry}(),
          maxX,
          maxY,
@@ -340,6 +340,20 @@ function OPT1_TryLevelUp(allEntries::Array{OPT1_WorkerEntry})
       if workerLevel > maxLevel
          maxLevel = workerLevel
       end
+
+   end
+
+   # I spent an entire day debugging to add these 4 lines.
+   #=
+   The logic: Beforehand, sending map tiles in response used the max level of ALL workers.
+   However, when a worker requested new data, it only updated its OWN level. This meant that it
+   would've received a supplement from a high level, explore until it found missing data, and then it would
+   have to level itself up a hundred times to reach the level its own tiles came from, after which he would again 
+   receive new tiles.
+   =#
+   for entry::OPT1_WorkerEntry in allEntries
+      entry.workerLevel_A = maxLevel
+      entry.workerLevel_B = maxLevel
    end
 
    return maxLevel
@@ -400,11 +414,70 @@ function OPT1_AllBeautyPathsAreReceived(s::MasterState)
 end
 
 
+# #=
+# The idea:
+# Take the missing tile, and grab it, and the tiles that surround it, but only those that were not yet sent, according to sentMinMax.
+# =#
+# function OPT1_Master_BuildMapSupplement(allTiles::Array{MapTile,2}, sentMinMax::Vector{Union{MinMaxY,Nothing}}, missingTile::Tuple{Int32,Int32}, radius::Int32)::Vector{MapTile}
+#    missingTileX = missingTile[1]
+#    missingTileY = missingTile[2]
+
+
+#    # We're gonna go from the bottom left, and form rows upwards.
+
+#    startX = missingTileX - radius
+#    endX = missingTileX + radius
+#    startY = missingTileY - radius
+#    endY = missingTileY + radius
+
+#    # Capping the values
+#    if startX < 1
+#       startX = 1
+#    end
+#    if startY < 1
+#       startY = 1
+#    end
+#    if endX > size(allTiles, 2)
+#       endX = size(allTiles, 2)
+#    end
+#    if endY > size(allTiles, 1)
+#       endY = size(allTiles, 1)
+#    end
+
+#    theSupplement::Vector{MapTile} = []
+
+#    for x in startX:endX, y in startY:endY
+#       mustAdd = false
+#       if sentMinMax[x] === nothing
+#          mustAdd = true
+
+#          # Updating minMaxY
+#          sentMinMax[x] = MinMaxY(y, y)
+#       else
+#          minMax::MinMaxY = sentMinMax[x]
+#          if !(y >= minMax.minY && y <= minMax.maxY)
+#             mustAdd = true
+
+#             # Updating minMaxY
+#             if y > minMax.maxY
+#                minMax.maxY = y
+#             end
+#             if y < minMax.minY
+#                minMax.minY = y
+#             end
+#          end
+#       end
+
+#       if mustAdd
+#          push!(theSupplement, allTiles[x, y])
+#       end
+#    end
+#    println("The supplement: $(theSupplement)")
+#    return theSupplement
+# end
 
 # A function that took quite a few calories to write
-function OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile, allTiles::Array{MapTile,2}, verticalEstimationSize::Int32, horizontalExtensionSize::Int32, maxX::Int32, maxY::Int32, sentMinMax::Array{Union{MinMaxY,Nothing}})::Array{MapTile,1}
-   DEBUG_previouslySentNotAddedCount::Int = 0
-   DEBUG_totalConsidered::Int = 0
+function OPT1_GetEstimatedNecessaryCells_StraightLine(wayPointA::MapTile, wayPointB::MapTile, allTiles::Array{MapTile,2}, verticalExtension::Int32, horizontalExtension::Int32, maxX::Int32, maxY::Int32, sentMinMax::Array{Union{MinMaxY,Nothing}})::Array{MapTile,1}
 
    # // ::: -------------------------:: Creating the diagonals ::------------------------- ::: // 
    if wayPointA.x < wayPointB.x
@@ -426,11 +499,11 @@ function OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile,
    diagonals = Tuple{Int32,Int32}[]
 
    leftMostX = leftWayPoint.x
-   leftMostX -= horizontalExtensionSize
+   leftMostX -= horizontalExtension
    leftMostX = clamp(leftMostX, Int32(1), maxX)
 
    rightMostX = rightWayPoint.x
-   rightMostX += horizontalExtensionSize
+   rightMostX += horizontalExtension
    rightMostX = clamp(rightMostX, Int32(1), maxX)
 
 
@@ -457,41 +530,45 @@ function OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile,
       diagonalY += slope
    end
 
+   xsOnly = []
+   for diag in diagonals[1][1]
+      push!(xsOnly, diag)
+   end
+   sort!(xsOnly)
+   expectedX = xsOnly[1]
+   for xs in xsOnly
+      @assert xs == expectedX "Expected $(expectedX) but found $(xs)"
+      expectedX += 1
+   end
 
-   coordinates::Array{Tuple{Int32,Int32},1} = Tuple{Int32,Int32}[]
+   coordinates::Vector{Tuple{Int32,Int32}} = Tuple{Int32,Int32}[]
 
    # ::: -------------------------:: Grabbing columns from the diagonals ::------------------------- ::: // 
    for diagonal::Tuple{Int32,Int32} in diagonals
+      currentDiagonal_X = diagonal[1]
+      currentDiagonal_Y = diagonal[2]
 
-      lowest = diagonal[2] - verticalEstimationSize
+      lowest = currentDiagonal_Y - verticalExtension
       if lowest < 1
          lowest = 1
       end
       if lowest > maxY
          lowest = maxY
       end
-
-      highest = diagonal[2] + verticalEstimationSize
+      highest = currentDiagonal_Y + verticalExtension
       if highest > maxY
          highest = maxY
       end
 
-      columnMinMax = sentMinMax[diagonal[1]]
+      columnMinMax = sentMinMax[currentDiagonal_X]
 
       if columnMinMax === nothing
          for v in lowest:highest
-            @assert v >= 1 "v was less than 1: $v"
-            push!(coordinates, (diagonal[1], v))
+            push!(coordinates, (currentDiagonal_X, v))
          end
-         newColumnMinMax::MinMaxY = MinMaxY(lowest, highest)
-         sentMinMax[diagonal[1]] = newColumnMinMax
+         sentMinMax[currentDiagonal_X] = MinMaxY(lowest, highest)
 
       else # If the sentMinMax did exist for this column, use that to selectively gather tiles to send
-         @assert columnMinMax.minY > 0
-         @assert columnMinMax.maxY > 0
-         #=
-         These two if checks exist to deal with disjoint ranges. 
-         =#
          if highest < columnMinMax.minY
             highest = columnMinMax.minY - 1 # - 1 so we don't send a duplicate
             @assert highest <= maxY "Highest was greater than maxY: $highest vs $maxY, minY was $(columnMinMax.minY)"
@@ -508,11 +585,7 @@ function OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile,
             if v < columnMinMax.minY || v > columnMinMax.maxY
                @assert v >= 1 "v was less than 1: $v. lowest: $lowest, highest: $highest"
                @assert v <= maxY "v was less than greater than maxY: $v. lowest: $lowest, highest: $highest"
-               push!(coordinates, (diagonal[1], v))
-               DEBUG_totalConsidered += 1
-            else
-               DEBUG_previouslySentNotAddedCount += 1
-               DEBUG_totalConsidered += 1
+               push!(coordinates, (currentDiagonal_X, v))
             end
          end
 
@@ -523,13 +596,14 @@ function OPT1_GetEstimatedNecessaryCells(wayPointA::MapTile, wayPointB::MapTile,
          if highest > columnMinMax.maxY
             columnMinMax.maxY = highest
          end
+         @assert columnMinMax.maxY >= columnMinMax.minY
       end
    end
+
    mapTilePackage::Array{MapTile,1} = MapTile[]
    for coord in coordinates
       push!(mapTilePackage, allTiles[coord[1], coord[2]])
    end
-
 
    return mapTilePackage
 end
@@ -541,7 +615,7 @@ end
 
 
 
-function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, runConfig::OPT1_RunConfig)
+function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig::OPT1_RunConfig)
 
    config = include("config.jl")
 
@@ -559,13 +633,21 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, runConfig::
    mkpath(path)
 
    for mazeSpec::Union{HandcraftedMazeSpecification,RandomMazeSpecification} in runConfig.mazeSpecs
-      if mazeSpec isa Vector{RandomMazeSpecification}
+      if mazeSpec isa RandomMazeSpecification
          mazeSizeX = mazeSpec.width
          mazeSizeY = mazeSpec.height
+         mazeDescription = "$(mazeSpec.width)x$(mazeSpec.height)"
       else
-         # TODO: Figure out this control flow later.
          mazeSizeX = -99
          mazeSizeY = -99
+         mazeDescription = mazeSpec.mazeName
+      end
+
+
+      mtDescription = if runConfig.multithread
+         "(MULTI-THREADED)"
+      else
+         "(SINGLE-THREADED)"
       end
 
       worker::String = if nranks == 2
@@ -574,7 +656,7 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, runConfig::
          "workers"
       end
       if rank == 0
-         println("Running BenchmarkingRun A with $(nranks-1) $(worker)")
+         println("Running BenchmarkingRun A with $(nranks-1) $(worker) $mtDescription")
       end
 
       reportStructs::Vector{OPT1_BenchmarkingReportStruct} = Vector{OPT1_BenchmarkingReportStruct}()
@@ -591,9 +673,12 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, runConfig::
          else
             OPT1_Entry(comm, nranks, rank, runConfig, mazeSpec)
          end
+         if rank == 0
+            println("Completed iteration $i of $(iterations+1) for $mazeDescription with $(nranks-1) workers $mtDescription")
+         end
       end
       if rank == 0
-         println("The AVERAGE report:")
+         println("\nGenerating report...\n")
          averageReport = OPT1_AverageBenchmarkingReportStructs(reportStructs)
          println(OPT1_GenerateReportString(averageReport))
 
@@ -606,10 +691,11 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, runConfig::
          end
 
          if singleRun
+            println("Constructing the benchmark graph for the single run")
             OPT1_ProduceBenchmarkGraphs(path)
          end
 
-         println("Completed the benchmarking for a maze of size $(mazeSizeX)x$(mazeSizeY) with $(nranks) processors")
+         println("Completed the benchmarking for a maze of size $(mazeSizeX)x$(mazeSizeY) with $(nranks) processors, of which $(nranks-1) were workers.")
       end
    end
 end
@@ -642,7 +728,7 @@ function OPT1_Entry(comm, nranks, rank, runConfig::OPT1_RunConfig, chosenRunConf
    MPI.Barrier(comm)
 
    if rank == 0
-      reportStruct::OPT1_BenchmarkingReportStruct = OPT1_MasterCore(comm, nranks, computedMaze, mapName)
+      reportStruct::OPT1_BenchmarkingReportStruct = OPT1_MasterCore(comm, nranks, computedMaze, mapName, runConfig.multithread)
    else
       OPT1_WorkerCore(comm, rank, 0, runConfig.multithread)
    end
@@ -661,11 +747,11 @@ end
 
 
 
-function OPT1_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::String)
+function OPT1_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::String, isMultiThreaded::Bool)
    T_startTime = time()
    T_startToBeautified::Float64 = @elapsed begin
       T_offlinePrelude::Float64 =
-         @elapsed s::MasterState = OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze, mapName)
+         @elapsed s::MasterState = OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze, mapName, isMultiThreaded)
       s.benchmarkData_Master.startTime = T_startTime
       s.benchmarkData_Master.secondsForOfflinePreludeBeforeSendingInitialJobs = T_offlinePrelude
 
@@ -692,7 +778,6 @@ function OPT1_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::Stri
                &&
                OPT1_Master_AllInitialPathsAreReceived(s.workerEntries)
             )
-               println("MASTER: Received all initial pahts")
                s.benchmarkData_Master.secondsFromStartToHavingReceivedAllInitialPaths = time() - s.benchmarkData_Master.startTime
             end
          else
@@ -765,9 +850,8 @@ function OPT1_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::Stri
 
    s.benchmarkData_Master.secondsFromStartToHavingReceivedAllBeautifiedPaths = T_startToBeautified
    s.benchmarkData_Master.finalLevel = s.currentLevel
-   s.benchmarkData_Master.finalSize = s.horizontalExtensionSize * s.verticalEstimationSize
+   s.benchmarkData_Master.finalSize = s.horizontalExtension * s.verticalExtension
 
-   println("Ok, gonna do a sigle threaded solve now to compare yuh yuh ")
    # Limitation here is that maxX and maxY have to be different from previous mazes for this to be correct
    stSeconds = @elapsed stSolution = st_AStar(s.computedMaze.startTile, s.computedMaze.endTile, s.computedMaze.allTiles)
    stCost = ComputePathCost(stSolution)
@@ -794,35 +878,35 @@ end
 
 
 
-function OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMaze, mapName::String)
+function OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMaze, mapName::String, isMultiThreaded::Bool)
 
    # Magic values to tune for good results 
 
-   # verticalEstimationSize_Default::Int32 = 99999999
-   # horizontalExtensionSize_Default::Int32 = 99999999
+   # verticalExtension_Default::Int32 = 99999999
+   # horizontalExtension_Default::Int32 = 99999999
 
-   # verticalEstimationSize_Default::Int32 = 16
-   # horizontalExtensionSize_Default::Int32 = 16
+   # verticalExtension_Default::Int32 = 16
+   # horizontalExtension_Default::Int32 = 16
 
    # For testing multithreading
-   verticalEstimationSize_Default::Int32 = 2
-   horizontalExtensionSize_Default::Int32 = 2
+   # verticalExtension_Default::Int32 = 2
+   # horizontalExtension_Default::Int32 = 2
 
    # So far, optimal
-   # verticalEstimationSize_Default::Int32 = 32
-   # horizontalExtensionSize_Default::Int32 = 16
+   verticalExtension_Default::Int32 = 32
+   horizontalExtension_Default::Int32 = 8
 
-   # verticalEstimationSize_Default::Int32 = 64
-   # horizontalExtensionSize_Default::Int32 = 4
+   # verticalExtension_Default::Int32 = 64
+   # horizontalExtension_Default::Int32 = 8
 
-   # verticalEstimationSize_Default::Int32 = 64
-   # horizontalExtensionSize_Default::Int32 = 32
+   # verticalExtension_Default::Int32 = 64
+   # horizontalExtension_Default::Int32 = 32
 
 
    currentLevel = 1
 
-   verticalEstimationSize::Int32 = verticalEstimationSize_Default
-   horizontalExtensionSize::Int32 = horizontalExtensionSize_Default
+   verticalExtension::Int32 = verticalExtension_Default
+   horizontalExtension::Int32 = horizontalExtension_Default
 
    maxX::Int32 = Int32(size(computedMaze.allTiles, 1))
    maxY::Int32 = Int32(size(computedMaze.allTiles, 2))
@@ -841,9 +925,10 @@ function OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMa
    end
 
    mapSize::Int = length(computedMaze.allTiles)
-   initialMapDeliverySize::Int = Int(verticalEstimationSize * horizontalExtensionSize)
+   initialMapDeliverySize::Int = Int(verticalExtension * horizontalExtension)
    benchmarkData_Master = BenchmarkData_MasterCore(
       mapName,
+      isMultiThreaded,
       nranks - 1,
       mapSize,
       initialMapDeliverySize
@@ -852,10 +937,10 @@ function OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMa
    s::MasterState = MasterState(
       comm,
       computedMaze,
-      verticalEstimationSize,
-      verticalEstimationSize_Default,
-      horizontalExtensionSize,
-      horizontalExtensionSize_Default,
+      verticalExtension,
+      verticalExtension_Default,
+      horizontalExtension,
+      horizontalExtension_Default,
       maxX,
       maxY,
       nranks,
@@ -878,12 +963,12 @@ end
 #         sentMinMax::Array{Union{MinMaxY,Nothing}} = fill(nothing, s.maxX)
 
 #         pathA_estimatedNecessaryCells::Array{MapTile,1} =
-#             OPT1_GetEstimatedNecessaryCells(pathA[1], pathA[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
+#             OPT1_GetEstimatedNecessaryCells(pathA[1], pathA[2], s.computedMaze.allTiles, s.verticalExtension, s.horizontalExtension, s.maxX, s.maxY, sentMinMax)
 #         pathIndex += 1
 
 #         pathB = paths[pathIndex]
 #         pathB_estimatedNecessaryCells::Array{MapTile,1} =
-#             OPT1_GetEstimatedNecessaryCells(pathB[1], pathB[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
+#             OPT1_GetEstimatedNecessaryCells(pathB[1], pathB[2], s.computedMaze.allTiles, s.verticalExtension, s.horizontalExtension, s.maxX, s.maxY, sentMinMax)
 #         pathIndex += 1
 
 #         both_estimatedNecessaryCells::Array{MapTile,1} = unique(vcat(pathA_estimatedNecessaryCells, pathB_estimatedNecessaryCells))
@@ -914,12 +999,12 @@ function OPT1_Master_SendInitialJobs(s::MasterState, paths::Vector{Tuple{MapTile
 
       pathB = paths[pathIndex]
       pathB_estimatedNecessaryCells::Array{MapTile,1} =
-         OPT1_GetEstimatedNecessaryCells(pathB[1], pathB[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
+         OPT1_GetEstimatedNecessaryCells_StraightLine(pathB[1], pathB[2], s.computedMaze.allTiles, s.verticalExtension, s.horizontalExtension, s.maxX, s.maxY, sentMinMax)
 
       pathIndex -= 1
       pathA = paths[pathIndex]
       pathA_estimatedNecessaryCells::Array{MapTile,1} =
-         OPT1_GetEstimatedNecessaryCells(pathA[1], pathA[2], s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
+         OPT1_GetEstimatedNecessaryCells_StraightLine(pathA[1], pathA[2], s.computedMaze.allTiles, s.verticalExtension, s.horizontalExtension, s.maxX, s.maxY, sentMinMax)
       pathIndex -= 1
 
 
@@ -999,16 +1084,29 @@ function OPT1_Master_RespondToMapRequest(s::MasterState, mapRequest::OPT1_MapReq
    OPT1_UpdateRecord(s.workerEntries[source], mapRequest)
    previousLevel = s.currentLevel
    s.currentLevel = OPT1_TryLevelUp(s.workerEntries)
-   leveledUp = s.currentLevel > previousLevel
+   # leveledUp = s.currentLevel > previousLevel
+
+   # println("Map request response. Level is now $(s.currentLevel)")
+   # println("The level of the asker is $(s.workerEntries[source].workerLevel_A) or $(s.workerEntries[source].workerLevel_B)")
 
 
    # Actual grows function
-   # s.verticalEstimationSize = s.verticalEstimationSize_Default * (s.currentLevel * 3)
-   # s.horizontalExtensionSize = s.horizontalExtensionSize_Default * (s.currentLevel * 3)
+   s.verticalExtension = s.verticalExtension_Default * (s.currentLevel * 3)
+   s.horizontalExtension = s.horizontalExtension_Default * (s.currentLevel * 3)
 
    # Growth function to stress test the mechanisms
-   s.verticalEstimationSize = s.verticalEstimationSize_Default + s.currentLevel
-   s.horizontalExtensionSize = s.horizontalExtensionSize_Default + s.currentLevel
+   # s.verticalExtension = s.verticalExtension_Default + s.currentLevel
+   # s.horizontalExtension = s.horizontalExtension_Default + s.currentLevel
+
+   # if (s.currentLevel > 10)
+   #    error("debugging")
+   # else
+   #    println("Didn't error because current level is $(s.currentLevel)")
+   # end
+
+
+   radius::Int32 = Int32(s.currentLevel)
+   # println("The radius: $radius")
 
 
    sentMinMax::Array{Union{MinMaxY,Nothing}} = s.workerEntries[source].sentMinMax
@@ -1019,16 +1117,17 @@ function OPT1_Master_RespondToMapRequest(s::MasterState, mapRequest::OPT1_MapReq
       end
    end
 
-   supplementMapTiles::Array{MapTile,1} =
+   # supplementMapTiles::Vector{MapTile} = OPT1_Master_BuildMapSupplement(s.computedMaze.allTiles, s.workerEntries[source].sentMinMax, mapRequest.missingTile, radius)
+   supplementMapTiles::Array{MapTile,1} = OPT1_GetEstimatedNecessaryCells_StraightLine(mapRequest.wayPointA, mapRequest.wayPointB, s.computedMaze.allTiles, s.verticalExtension, s.horizontalExtension, s.maxX, s.maxY, sentMinMax)
 
    # TODO Fix bug: Despite leveling up, the maxY is not increased 
-      OPT1_GetEstimatedNecessaryCells(mapRequest.wayPointA, mapRequest.wayPointB, s.computedMaze.allTiles, s.verticalEstimationSize, s.horizontalExtensionSize, s.maxX, s.maxY, sentMinMax)
 
 
-   if mapRequest.missingTile[1] > Int32(0)
-      newMaxY = sentMinMax[mapRequest.missingTile[1]].maxY
-      @assert OPT1_Master_SupplementContainsMissingTile(s.workerEntries[source].sentMinMax, mapRequest.missingTile, supplementMapTiles) "Supplement did not contain missing tile $(mapRequest.missingTile). Level up: $leveledUp. previous maxy: $previousMaxY, new maxY: $newMaxY"
-   end
+
+   # if mapRequest.missingTile[1] > Int32(0)
+   #    newMaxY = sentMinMax[mapRequest.missingTile[1]].maxY
+   #    @assert OPT1_Master_SupplementContainsMissingTile(s.workerEntries[source].sentMinMax, mapRequest.missingTile, supplementMapTiles) "Supplement did not contain missing tile $(mapRequest.missingTile). Level up: $leveledUp. previous maxy: $previousMaxY, new maxY: $newMaxY"
+   # end
 
    req = MPI.Isend(supplementMapTiles, s.comm, dest=source, tag=OPT1_MAP_SUPPLEMENT)
    push!(s.iSendRequests, req)
@@ -1376,7 +1475,7 @@ end
 
 
 
-function OPT1_Worker_ReceiveAndProcessMapSupplement!(w::WorkerState)
+function OPT1_Worker_ReceiveSupplement(w::WorkerState)
    comm = w.comm
    availableTiles = w.availableTiles
    rank = w.rank
@@ -1402,10 +1501,8 @@ function OPT1_Worker_ReceiveAndProcessMapSupplement!(w::WorkerState)
    for suppliedTile::MapTile in mapSupplyDelivery
       @assert !haskey(availableTiles, (suppliedTile.x, suppliedTile.y)) "Worker $rank already had the tile $suppliedTile in its storage"
       availableTiles[(suppliedTile.x, suppliedTile.y)] = suppliedTile
-      # if w.rank == 2
-      #    println("Worker 2 received $(suppliedTile.x), $(suppliedTile.y)")
-      # end
    end
+
    w.bench.secondsProcessingIncomingMapSupplements += time() - T_startOfProcessingMapSupplement
 end
 
@@ -1447,7 +1544,7 @@ function OPT1_Worker_BeautificationPhase(w::WorkerState)
              that a worker needs to request more data is even smaller
          =#
       elseif tag == OPT1_MAP_SUPPLEMENT
-         OPT1_Worker_ReceiveAndProcessMapSupplement!(w)
+         OPT1_Worker_ReceiveSupplement(w)
 
       elseif tag == OPT1_ALL_DONE
          MPI.recv(w.comm)
@@ -1486,7 +1583,7 @@ function OPT1_Worker_ReceiveBeautificationJobs!(w::WorkerState)
    while (!haskey(w.availableTiles, startTuple) || !haskey(w.availableTiles, endTuple))
       mapRequest::OPT1_MapRequest = OPT1_MapRequest(beautyJob.wayPointA, beautyJob.wayPointB, false, true)
       push!(w.iSendRequests, MPI.Isend(mapRequest, w.comm, dest=0, tag=OPT1_MAP_REQUEST))
-      OPT1_Worker_ReceiveAndProcessMapSupplement!(w)
+      OPT1_Worker_ReceiveSupplement(w)
    end
 
    beauty_startTile = w.availableTiles[startTuple]
@@ -1558,7 +1655,7 @@ function OPT1_Worker_CompleteBeautyJob(w::WorkerState)
          w.bench.numberOfTimesNewMapDataWasRequested += 1
          OPT1_Worker_SendMapRequest(w.beautyJobState, false, w.comm, w; isBeauty=true)
          w.beautyJobState.postponed = true
-         OPT1_Worker_ReceiveAndProcessMapSupplement!(w)
+         OPT1_Worker_ReceiveSupplement(w)
       else
          beautyJobSolved = true
          OPT1_Worker_SendCompletedPath(jobSolveResult, OPT1_PATH_DELIVERY_BEAUTIFIED, w.comm, w)
@@ -1570,16 +1667,16 @@ end
 
 
 function OPT1_Worker_MT_SolveInitialJobs(w::WorkerState)
-   println("DOINGA FRESH INITIAL PATH SOLVE")
+   # println("DOINGA FRESH INITIAL PATH SOLVE")
    c = Worker_MT_Communication()
 
    @assert Threads.nthreads() > 1 "Didn't have enough threads for MT_SolveInitialJobs(): $(Threads.nthreads())"
 
    # T_StartingMPIThread = time()
    @spawn OPT1_Worker_MT_MPIThread(w, c)
-   println("$(w.rank) entered MT_SolveInitialJobs()")
+   # println("$(w.rank) entered MT_SolveInitialJobs()")
    OPT1_Worker_MT_PathfindingThread(w, c)
-   println("$(w.rank) completed MT_SolveInitialJobs()")
+   # println("$(w.rank) completed MT_SolveInitialJobs()")
 end
 
 function PATHFINDER_Println(content)
@@ -1596,8 +1693,8 @@ function OPT1_Worker_MT_MPIThread(w::WorkerState, c::Worker_MT_Communication)
    totalSupplementsHandled = 0
    pendingSupplement_A = false
    pendingSupplement_B = false
-   mapRequest_A = OPT1_MapRequest(w.jobAState.startTile, w.jobAState.endTile, true, false)
-   mapRequest_B = OPT1_MapRequest(w.jobBState.startTile, w.jobBState.endTile, true, false)
+   mapRequest_A = OPT1_MapRequest(w.jobAState.startTile, w.jobAState.endTile, true, false, (Int32(0), Int32(0)))
+   mapRequest_B = OPT1_MapRequest(w.jobBState.startTile, w.jobBState.endTile, true, false, (Int32(0), Int32(0)))
    while true
 
       mapSupplementsCombined = Vector{MapTile}()
@@ -1657,7 +1754,7 @@ function OPT1_Worker_MT_MPIThread(w::WorkerState, c::Worker_MT_Communication)
       end
    end
 
-   println("$(w.rank) MPI Thread is done. I served $totalSupplementsHandled supplements in the initial path!")
+   # println("$(w.rank) MPI Thread is done. I served $totalSupplementsHandled supplements in the initial path!")
    unlock(c.lock_MakeSupplementRequest)
 end
 
@@ -1747,7 +1844,7 @@ function OPT1_Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobBComp
       if !jobASolved
          # Check if Job A's supplement has come in the mail yet.
          if w.jobAState.postponed
-            OPT1_Worker_ReceiveAndProcessMapSupplement!(w)
+            OPT1_Worker_ReceiveSupplement(w)
          end
          T_beforeComputation = time()
          jobA_solveResult = OPT1_CustomAStar(w, w.jobAState)
@@ -1770,7 +1867,7 @@ function OPT1_Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobBComp
 
          # Check if Job B's supplement has come in the mail yet 
          if w.jobBState.postponed
-            OPT1_Worker_ReceiveAndProcessMapSupplement!(w)
+            OPT1_Worker_ReceiveSupplement(w)
          end
          T_beforeComputation = time()
          jobB_solveResult = OPT1_CustomAStar(w, w.jobBState)
@@ -1828,9 +1925,7 @@ function AStar_OPT1_GetNeighbors!(wState::WorkerState, neighbors::Array{MapTile}
       northX = pathfindingState.currentTile.x
       north = get(wState.availableTiles, (northX, northY), nothing)
       if north === nothing
-         if wState.rank == 2
-            println("Worker $(wState.rank) requested more tiles because north was nothing for coord $(northX), $(northY)")
-         end
+         # println("Worker $(wState.rank) requested more tiles because north was nothing for coord $(northX), $(northY)")
          pathfindingState.missingTile = (northX, northY)
          return false
       end
@@ -1842,9 +1937,7 @@ function AStar_OPT1_GetNeighbors!(wState::WorkerState, neighbors::Array{MapTile}
       eastY = pathfindingState.currentTile.y
       east = get(wState.availableTiles, (eastX, eastY), nothing)
       if east === nothing
-         if wState.rank == 2
-            println("Worker $(wState.rank) requested more tiles because east was nothing for coord $(eastX), $(eastY)")
-         end
+         # println("Worker $(wState.rank) requested more tiles because east was nothing for coord $(eastX), $(eastY)")
          pathfindingState.missingTile = (eastX, eastY)
          return false
       end
@@ -1856,9 +1949,7 @@ function AStar_OPT1_GetNeighbors!(wState::WorkerState, neighbors::Array{MapTile}
       southX = pathfindingState.currentTile.x
       south = get(wState.availableTiles, (southX, southY), nothing)
       if south === nothing
-         if wState.rank == 2
-            println("Worker $(wState.rank) requested more tiles because south was nothing for coord $(southX), $(southY)")
-         end
+         # println("Worker $(wState.rank) requested more tiles because south was nothing for coord $(southX), $(southY)")
          pathfindingState.missingTile = (southX, southY)
          return false
 
@@ -1871,9 +1962,7 @@ function AStar_OPT1_GetNeighbors!(wState::WorkerState, neighbors::Array{MapTile}
       westY = pathfindingState.currentTile.y
       west = get(wState.availableTiles, (westX, westY), nothing)
       if west === nothing
-         if wState.rank == 2
-            println("Worker $(wState.rank) requested more tiles because west was nothing for coord $(westX), $(westY)")
-         end
+         # println("Worker $(wState.rank) requested more tiles because west was nothing for coord $(westX), $(westY)")
          pathfindingState.missingTile = (westX, westY)
          return false
       end

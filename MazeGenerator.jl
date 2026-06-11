@@ -1,6 +1,55 @@
 using .CenAstar
 
 
+
+
+function ComputeMaze(mazeSize_X::Int32, mazeSize_Y::Int32)::ComputedMaze
+    xMin::Int32 = 1
+    xMax::Int32 = mazeSize_X
+    yMin::Int32 = 1
+    yMax::Int32 = mazeSize_Y
+
+    @assert xMin == 1 # Never Change
+    @assert yMin == 1 # Never Change
+
+    walls = PrimsMazeGenerator(xMin, xMax, yMin, yMax)
+    PunctureHoles!(walls)
+
+    mutable_wallMapTiles = [CreateWall(Int32(x), Int32(y)) for (x, y) in walls]
+    mutable_pathMapTiles = GeneratePathTiles(walls, xMin, xMax, yMin, yMax)
+    mutable_mapBorders = GenerateMapBorders(xMin, xMax, yMin, yMax)
+
+    mutable_startTile = FindExistingMapTile(xMin, yMin, mutable_pathMapTiles)
+    mutable_endTile = FindExistingMapTile(xMax, yMax, mutable_pathMapTiles)
+
+    mutable_traversablePaths = [mutable_wallMapTiles; mutable_pathMapTiles]
+
+    width = xMax
+    height = yMax
+
+
+
+
+    # // ::: -------------------------:: Making it all immutable ::------------------------- ::: //
+    CreateImmutableMapTileArray = (mutableArray::Array{MutableMapTile}) -> [MapTile(mut.x, mut.y, costToReach=mut.costToReach) for mut::MutableMapTile in mutableArray]
+
+    startTile = MakeImmutable(mutable_startTile)
+    endTile = MakeImmutable(mutable_endTile)
+    traversablePaths = CreateImmutableMapTileArray(mutable_traversablePaths)
+    mapBorders = CreateImmutableMapTileArray(mutable_mapBorders)
+    # wallMapTiles = CreateImmutableMapTileArray(mutable_wallMapTiles)
+    # pathMapTiles = CreateImmutableMapTileArray(mutable_pathMapTiles)
+
+    allTiles2DArray = Array{MapTile,2}(undef, width, height)
+    for path::MapTile in traversablePaths
+        allTiles2DArray[path.x, path.y] = path
+    end
+
+    computedMaze::ComputedMaze = ComputedMaze(startTile, endTile, mapBorders, allTiles2DArray, [])
+    return computedMaze
+end
+
+
 function _MakeEndTileReachable!(path, walls, evacuationVisited, currentEvacuator, xMin, xMax, yMin, yMax)
     neighbors = GetNeighbors(currentEvacuator, xMin, xMax, yMin, yMax)
 

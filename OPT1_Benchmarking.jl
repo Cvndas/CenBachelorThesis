@@ -1,8 +1,4 @@
 using Statistics
-const GRAPH_POINT_SIZE = 10
-const BEAUTY_COLOR = :red
-const INITIAL_COLOR = :green
-const ST_COLOR = :blue
 
 
 function HelloWorldFromBenchmarking()
@@ -100,6 +96,7 @@ const BenchmarkValue_NOTSET = -999
 
 mutable struct BenchmarkData_MasterCore
     mapName::String
+    isMultiThreaded::Bool
 
     workerCount::Int
     totalMapSize::Int
@@ -126,10 +123,10 @@ mutable struct BenchmarkData_MasterCore
     numberOfTimesPriorityWorkerWasChosenForBeautification::Int
 
 
-    function BenchmarkData_MasterCore(mapName::String, workerCount::Int, mapSize::Int, initialMapDeliverySize::Int)::BenchmarkData_MasterCore
+    function BenchmarkData_MasterCore(mapName::String, isMultiThreaded, workerCount::Int, mapSize::Int, initialMapDeliverySize::Int)::BenchmarkData_MasterCore
         new(
             mapName,
-            workerCount,
+            isMultiThreaded, workerCount,
             mapSize,
             #
             BenchmarkValue_NOTSET, # initialPathCost
@@ -300,6 +297,7 @@ struct OPT1_BenchmarkingReportStruct
     secondsSpentProcessingIncomingMapSupplements_BWA
 
     tilesReceivedWhenSolvingInitialPath_BWA
+    isMultiThreaded::Bool
 end
 
 function OPT1_AverageBenchmarkingReportStructs(reportStructs::Vector{OPT1_BenchmarkingReportStruct})::OPT1_BenchmarkingReportStruct
@@ -361,7 +359,8 @@ function OPT1_AverageBenchmarkingReportStructs(reportStructs::Vector{OPT1_Benchm
         BWA_Average([r.secondsSpentReceivingIncomingMapSupplements_BWA for r in reportStructs]),
         BWA_Average([r.secondsSpentProcessingIncomingMapSupplements_BWA for r in reportStructs]),
         #
-        BWA_Average([r.tilesReceivedWhenSolvingInitialPath_BWA for r in reportStructs])
+        BWA_Average([r.tilesReceivedWhenSolvingInitialPath_BWA for r in reportStructs]),
+        first.isMultiThreaded
     )
 end
 
@@ -378,6 +377,7 @@ function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct):
         "secondsFromStartToHavingReceivedAllInitialPaths",
         "secondsFromStartToHavingReceivedAllBeautifiedPaths",
         "st_seconds",
+        "tilesReceivedWhenSolvingInitialPath",
         "Explored"]
     potentialBottlenecks = ""
     allFloatValues = Vector{Float64}()
@@ -438,28 +438,87 @@ function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct):
     end
 
 
+    mtDescription = if r.isMultiThreaded
+        "(MULTITHREADED)"
+    else
+        "(SINGLETHREADED)"
+    end
+
+    beautifiedPercentageVsST = 100 / r.st_seconds * r.secondsFromStartToHavingReceivedAllBeautifiedPaths
+    beautifiedPathEfficiency = (r.beautifiedPathCost - r.st_cost) / r.st_cost * 100
 
     # TODO: Total time not doing raw computation (summing waiting and non-waiting together)
     report::String = "
-        +++MASTER REPORT FOR [$(r.mapName)] WITH $(r.workerCount) WORKERS+++
+        +++MASTER REPORT FOR [$(r.mapName)] WITH $(r.workerCount) WORKERS $mtDescription+++
 
         | Map Info
         Total Map Size: $(r.totalMapSize) (Equivalent to a $(r.equivalentWidthHeight)x$(r.equivalentWidthHeight) map)
 
+        \e[34m
         | Path Cost
         Initial Path Cost: $(r.initialPathCost)
         Beautified Path Cost: $(r.beautifiedPathCost)
         Single threaded cost: $(r.st_cost)
+        Beautified Path cost is increased by $(beautifiedPathEfficiency)% over the single threaded path
 
         | Path generation time
         Seconds from start to having received all Initial Paths: $(r.secondsFromStartToHavingReceivedAllInitialPaths)
         Seconds from start to having received all Beautified Paths: $(r.secondsFromStartToHavingReceivedAllBeautifiedPaths)
         Seconds between having received all Initial Paths and all Beautified Paths: $(r.secondsFromStartToHavingReceivedAllBeautifiedPaths - r.secondsFromStartToHavingReceivedAllInitialPaths)
         Single threaded seconds: $(r.st_seconds)
+        Beautified path took $beautifiedPercentageVsST% of the single-threaded path time
+        \e[0m
 
+        \e[35m
         | Load Balance
         First worker to complete the second initial path: $(r.firstWorkerIdToCompleteSecondInitialPath)
         Last worker to complete the second initial path: $(r.lastWorkerIdToCompleteSecondInitialPath)
+
+        | Beautification paths solved by high-priority workers
+        On average, a priority worker was chosen $(percentageOfTimePriorityWorkerWasChosen)% of the time.
+
+        | Hyperparameter Configuration
+        Initial map delivery size: $(r.initialMapDeliverySize)
+        Number of times a map supplement was requested: $(r.timesAMapSupplementWasRequested)
+        Final level for map supplements: $(r.finalLevel), with a size of $(r.finalSize)
+        Again, the total map size is $(r.totalMapSize)
+
+        | Master Overhead
+        Seconds for offline prelude before sending initial jobs: $(r.secondsForOfflinePreludeBeforeSendingInitialJobs)
+        Seconds to send initial paths and jobs to all workers: $(r.secondsToSendInitialPathsAndJobsToAllWorkers)
+        \e[0m
+
+        \e[36m
+        | Worker job completion: Initial paths
+        Unlucky worker $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.worstId) took $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.worstVal) seconds to solve initial path after receiving job
+        Lucky worker $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.bestId) took $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.bestVal) seconds to solve initial path after receiving job
+        On average a worker spent $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.averageVal) seconds to solve the initial path after receiving job 
+
+        | Worker job completion: Beautified paths
+        Unlucky worker $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.worstId) took $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.worstVal) seconds to solve Beautified path after receiving initial job
+        Lucky worker $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.bestId) took $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.bestVal) seconds to solve Beautified path after receiving initial job
+        On average a worker spent $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.averageVal) seconds to solve the Beautified path after receiving initial job 
+
+        | Raw computation on the initial paths
+        Unlucky worker $(r.rawComputationSeconds_Initial_BWA.worstId) spent $(r.rawComputationSeconds_Initial_BWA.worstVal) seconds of raw computation time on the Initial pathfinding
+        Lucky worker $(r.rawComputationSeconds_Initial_BWA.bestId) spent $(r.rawComputationSeconds_Initial_BWA.bestVal) seconds of raw computation time on the Initial pathfinding
+        On average, a worker spent $(r.rawComputationSeconds_Initial_BWA.averageVal) seconds of raw computation time on Initial pathfindign
+
+        | Seconds spent NOT doing work in initial path
+        Unlucky worker $(r.secondsNotSpentDoingWorkInInitialPath_BWA.worstId) spent $(r.secondsNotSpentDoingWorkInInitialPath_BWA.worstVal) seconds not doing work in the initial path
+        Lucky worker $(r.secondsNotSpentDoingWorkInInitialPath_BWA.bestId) spent $(r.secondsNotSpentDoingWorkInInitialPath_BWA.bestVal) seconds not doing work in the initial path
+        On average, a worker spent $(r.secondsNotSpentDoingWorkInInitialPath_BWA.averageVal) seconds not doing work in the initial path
+
+        | Raw computation on the beautify paths
+        ~Unlucky~ worker $(r.rawComputationSeconds_Beautify_BWA.worstId) spent $(r.rawComputationSeconds_Beautify_BWA.worstVal) seconds of raw computation time on the Beautify pathfinding
+        ~Lucky~ worker $(r.rawComputationSeconds_Beautify_BWA.bestId) spent $(r.rawComputationSeconds_Beautify_BWA.bestVal) seconds of raw computation time on the Beautify pathfinding
+        On average, a worker spent $(r.rawComputationSeconds_Beautify_BWA.averageVal) seconds of raw computation time on beautify pathfindign
+
+        | Worker: Solving beautified path(s) after receiving first beautified path
+        Unlucky worker $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.worstId) took $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.worstVal) seconds to solve beautified path after receiving beautification job
+        Lucky worker $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.bestId) took $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.bestVal) seconds to solve beautified path after receiving beautification job
+        On average, a worker spent $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.averageVal) seconds to solve the beautification path after receiving the beautification job
+
 
         | Occasions that new map data was requested
         Unlucky worker $(r.numberOfTimesNewMapDataWasRequested_BWA.worstId) had to request new map data $(r.numberOfTimesNewMapDataWasRequested_BWA.worstVal) times
@@ -476,41 +535,29 @@ function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct):
         Lucky Worker $(r.secondsSpentWaitingForMapDataToComeIn_BWA.bestId) had to wait $(r.secondsSpentWaitingForMapDataToComeIn_BWA.bestVal) seconds for map data to come in
         On average a worker had to wait for $(r.secondsSpentWaitingForMapDataToComeIn_BWA.averageVal) seconds for map data to come in
 
-        | Raw computation on the initial paths
-        Unlucky worker $(r.rawComputationSeconds_Initial_BWA.worstId) spent $(r.rawComputationSeconds_Initial_BWA.worstVal) seconds of raw computation time on the Initial pathfinding
-        Lucky worker $(r.rawComputationSeconds_Initial_BWA.bestId) spent $(r.rawComputationSeconds_Initial_BWA.bestVal) seconds of raw computation time on the Initial pathfinding
-        On average, a worker spent $(r.rawComputationSeconds_Initial_BWA.averageVal) seconds of raw computation time on Initial pathfindign
 
-        | Raw computation on the beautify paths
-        ~Unlucky~ worker $(r.rawComputationSeconds_Beautify_BWA.worstId) spent $(r.rawComputationSeconds_Beautify_BWA.worstVal) seconds of raw computation time on the Beautify pathfinding
-        ~Lucky~ worker $(r.rawComputationSeconds_Beautify_BWA.bestId) spent $(r.rawComputationSeconds_Beautify_BWA.bestVal) seconds of raw computation time on the Beautify pathfinding
-        On average, a worker spent $(r.rawComputationSeconds_Beautify_BWA.averageVal) seconds of raw computation time on beautify pathfindign
+        | Seconds spent receiving available map supplements
+        Unlucky worker $(r.secondsSpentReceivingIncomingMapSupplements_BWA.worstId) spent $(r.secondsSpentReceivingIncomingMapSupplements_BWA.worstVal) seconds receiving available map supplements
+        Lucky worker $(r.secondsSpentReceivingIncomingMapSupplements_BWA.bestId) spent $(r.secondsSpentReceivingIncomingMapSupplements_BWA.bestVal) seconds receiving available map supplements
+        On average, a worker spent $(r.secondsSpentReceivingIncomingMapSupplements_BWA.averageVal) seconds receiving available map supplements
+
+        | Seconds spent processing map supplements
+        Unlucky worker $(r.secondsSpentProcessingIncomingMapSupplements_BWA.worstId) spent $(r.secondsSpentProcessingIncomingMapSupplements_BWA.worstVal) seconds processing available map supplements
+        Lucky worker $(r.secondsSpentProcessingIncomingMapSupplements_BWA.bestId) spent $(r.secondsSpentProcessingIncomingMapSupplements_BWA.bestVal) seconds processing available map supplements
+        On average, a worker spent $(r.secondsSpentProcessingIncomingMapSupplements_BWA.averageVal) seconds processing available map supplements
 
         | Number of beautification paths solved per worker
         ~Unlucky~ worker $(r.numberOfBeautificationPathsSolved_BWA.worstId) solved $(r.numberOfBeautificationPathsSolved_BWA.worstVal) beautification paths
         ~Lucky~ worker $(r.numberOfBeautificationPathsSolved_BWA.bestId) solved $(r.numberOfBeautificationPathsSolved_BWA.bestVal) beautification paths
         On average, a worker solved $(r.numberOfBeautificationPathsSolved_BWA.averageVal) beautification paths
+        \e[0m
 
         \e[32m
-        | Worker job completion: Initial paths
-        Unlucky worker $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.worstId) took $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.worstVal) seconds to solve initial path after receiving job
-        Lucky worker $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.bestId) took $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.bestVal) seconds to solve initial path after receiving job
-        On average a worker spent $(r.secondsFromReceivingJobToHavingSentInitialPaths_BWA.averageVal) seconds to solve the initial path after receiving job 
 
         | Worker job completion: Tiles received while solving initial paths
         Unlucky worker $(r.tilesReceivedWhenSolvingInitialPath_BWA.worstId) received $(r.tilesReceivedWhenSolvingInitialPath_BWA.worstVal) while solving initial path.
         Lucky worker $(r.tilesReceivedWhenSolvingInitialPath_BWA.bestId) received $(r.tilesReceivedWhenSolvingInitialPath_BWA.bestVal) while solving initial path.
         On average, a worker received $(r.tilesReceivedWhenSolvingInitialPath_BWA.averageVal) tiles when solving the initial path
-
-        | Worker job completion: Beautified paths
-        Unlucky worker $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.worstId) took $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.worstVal) seconds to solve Beautified path after receiving initial job
-        Lucky worker $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.bestId) took $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.bestVal) seconds to solve Beautified path after receiving initial job
-        On average a worker spent $(r.secondsFromReceivingJobToHavingSentBeautifiedPaths_BWA.averageVal) seconds to solve the Beautified path after receiving initial job 
-
-        | Worker: Solving beautified path(s) after receiving first beautified path
-        Unlucky worker $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.worstId) took $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.worstVal) seconds to solve beautified path after receiving beautification job
-        Lucky worker $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.bestId) took $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.bestVal) seconds to solve beautified path after receiving beautification job
-        On average, a worker spent $(r.solvingBeautifiedPathAfterReceivingBeautificationJob_BWA.averageVal) seconds to solve the beautification path after receiving the beautification job
 
         | Worker: Waiting for beautification job after solving initial paths
         Unlucky worker $(r.waitingForBeautificationJobAfterSolvingInitial_BWA.worstId) spent $(r.waitingForBeautificationJobAfterSolvingInitial_BWA.worstVal) seconds waiting for beautification job after solving initial
@@ -523,39 +570,13 @@ function OPT1_GenerateReportString(reportStruct::OPT1_BenchmarkingReportStruct):
         On average, a worker explored $(r.initialPathTilesExplored_BWA.averageVal) tiles in the initial path
         The slowest initial path solver explored $(r.initialPathTilesExploredBySlowestSolver) in the initial solve
 
-        | Seconds spent NOT doing work in initial path
-        Unlucky worker $(r.secondsNotSpentDoingWorkInInitialPath_BWA.worstId) spent $(r.secondsNotSpentDoingWorkInInitialPath_BWA.worstVal) seconds not doing work in the initial path
-        Lucky worker $(r.secondsNotSpentDoingWorkInInitialPath_BWA.bestId) spent $(r.secondsNotSpentDoingWorkInInitialPath_BWA.bestVal) seconds not doing work in the initial path
-        On average, a worker spent $(r.secondsNotSpentDoingWorkInInitialPath_BWA.averageVal) seconds not doing work in the initial path
-
-        | Seconds spent receiving available map supplements
-        Unlucky worker $(r.secondsSpentReceivingIncomingMapSupplements_BWA.worstId) spent $(r.secondsSpentReceivingIncomingMapSupplements_BWA.worstVal) seconds receiving available map supplements
-        Lucky worker $(r.secondsSpentReceivingIncomingMapSupplements_BWA.bestId) spent $(r.secondsSpentReceivingIncomingMapSupplements_BWA.bestVal) seconds receiving available map supplements
-        On average, a worker spent $(r.secondsSpentReceivingIncomingMapSupplements_BWA.averageVal) seconds receiving available map supplements
-
-        | Seconds spent processing map supplements
-        Unlucky worker $(r.secondsSpentProcessingIncomingMapSupplements_BWA.worstId) spent $(r.secondsSpentProcessingIncomingMapSupplements_BWA.worstVal) seconds processing available map supplements
-        Lucky worker $(r.secondsSpentProcessingIncomingMapSupplements_BWA.bestId) spent $(r.secondsSpentProcessingIncomingMapSupplements_BWA.bestVal) seconds processing available map supplements
-        On average, a worker spent $(r.secondsSpentProcessingIncomingMapSupplements_BWA.averageVal) seconds processing available map supplements
         \e[0m
 
 
-        | Beautification paths solved by high-priority workers
-        On average, a priority worker was chosen $(percentageOfTimePriorityWorkerWasChosen)% of the time.
-
-        | Hyperparameter Configuration
-        Initial map delivery size: $(r.initialMapDeliverySize)
-        Number of times a map supplement was requested: $(r.timesAMapSupplementWasRequested)
-        Final level for map supplements: $(r.finalLevel), with a size of $(r.finalSize)
-        Again, the total map size is $(r.totalMapSize)
-
-
-        | Master Overhead
-        Seconds for offline prelude before sending initial jobs: $(r.secondsForOfflinePreludeBeforeSendingInitialJobs)
-        Seconds to send initial paths and jobs to all workers: $(r.secondsToSendInitialPathsAndJobsToAllWorkers)
-
+        \e[31m
         | Potential bottlenecks
         $potentialBottlenecks
+        \e[0m
 
     "
 end
@@ -664,7 +685,8 @@ function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, work
         BestWorstAverage(secondsReceivingIncomingMapSupplements_Tuples),
         BestWorstAverage(secondsProcessingIncomingMapSupplements_Tuples),
         #
-        BestWorstAverage(tilesReceivedWhenSolvingInitialPath_Tuples)
+        BestWorstAverage(tilesReceivedWhenSolvingInitialPath_Tuples),
+        m.isMultiThreaded
     )
 
 
@@ -674,228 +696,4 @@ end
 
 
 
-
-
-
-# File names are squished between --- ---
-function GetMapNameFromFile(fileName::String)
-    parts = split(fileName, "---")
-    @assert length(parts) == 3 "Filename was incorrect, couldn't get the map name: $fileName"
-    return parts[2]
-end
-
-
-function OPT1_GenerateReportFilename(reportStruct::OPT1_BenchmarkingReportStruct)
-    mapName = replace(reportStruct.mapName, ":" => "x")
-    fileName::String = "OPT1_---$(mapName)---_$(reportStruct.workerCount+1)Ranks.BENCHMARK"
-end
-
-
-function OPT1_CreateGraphAxis(reportStructs::Vector{OPT1_BenchmarkingReportStruct}, fig, row, column, xlabel, ylabel, title)
-    processorValues = []
-    push!(processorValues, 1)
-    currentProcessor = 1
-    processorMax = maximum(p.workerCount + 1 for p in reportStructs)
-
-    multithreadedProcessorCounts = sort(unique([r.workerCount + 1 for r in reportStructs]), by=x -> x)
-    for m in multithreadedProcessorCounts
-        push!(processorValues, m)
-    end
-    # while currentProcessor < processorMax
-    #     currentProcessor *= 2
-    #     push!(processorValues, currentProcessor)
-    # end
-
-    processorLabels = [string(v) for v in processorValues]
-    xTicks = (processorValues, processorLabels)
-
-    return Axis(
-        fig[row, column],
-        xlabel=xlabel,
-        ylabel=ylabel,
-        title=title,
-        xticks=xTicks,
-        # yscale=log2,
-        # xscale=log2
-    )
-end
-
-function OPT1_CreateGraphTitle(reportStructs::Vector{OPT1_BenchmarkingReportStruct}, descriptionPart::String)
-    return "$(reportStructs[1].mapName) - $(descriptionPart)"
-end
-
-function OPT1_ProduceGraph_totalTime(reportStructs::Vector{OPT1_BenchmarkingReportStruct}, fig, row, column)
-    title = OPT1_CreateGraphTitle(reportStructs, "Time to solve paths")
-    axis = OPT1_CreateGraphAxis(reportStructs, fig, row, column, "Processor Count", "Solve duration (seconds)", title)
-
-    # Sorting along the x axis of the eventual figure
-    sortedReportStruct = sort(reportStructs, by=x -> x.workerCount)
-
-    #= 3 lines:
-    1. ST (which is a single point)
-    2. Initial
-    3. Beauty
-    =#
-    # stPoint
-    st_Xs = [0]
-    st_Ys = [sortedReportStruct[1].st_seconds] * 1000
-
-    sharedXs = []
-    initialYs = []
-    beautyYs = []
-
-    for reportStruct::OPT1_BenchmarkingReportStruct in sortedReportStruct
-        push!(sharedXs, reportStruct.workerCount)
-        push!(initialYs, reportStruct.secondsFromStartToHavingReceivedAllInitialPaths * 1000)
-        push!(beautyYs, reportStruct.secondsFromStartToHavingReceivedAllBeautifiedPaths * 1000)
-    end
-
-    lines!(axis, st_Xs, st_Ys, color=ST_COLOR, label="Single Threaded Seconds")
-    scatter!(axis, st_Xs, st_Ys, color=ST_COLOR, markersize=GRAPH_POINT_SIZE)
-
-    hlines!(axis, st_Ys[1], color=ST_COLOR, label="Single threaded Seconds")
-
-    lines!(axis, sharedXs, initialYs, color=INITIAL_COLOR, label="Initial path seconds(Miliseconds)")
-    scatter!(axis, sharedXs, initialYs, color=INITIAL_COLOR, markersize=GRAPH_POINT_SIZE)
-
-    lines!(axis, sharedXs, beautyYs, color=BEAUTY_COLOR, label="Beautified path (Miliseconds)")
-    scatter!(axis, sharedXs, beautyYs, color=BEAUTY_COLOR, markersize=GRAPH_POINT_SIZE)
-
-    axislegend(axis, "Seconds to build path", position=:rb)
-
-    return axis
-end
-
-
-
-function OPT1_ProduceGraph_pathCost(reportStructs::Vector{OPT1_BenchmarkingReportStruct}, fig, row, column)
-    title = OPT1_CreateGraphTitle(reportStructs, ": Path Cost")
-    axis = OPT1_CreateGraphAxis(reportStructs, fig, row, column, "Processor Count", "Path Cost", title)
-    axis.backgroundcolor = :lightgrey
-    # axis.aspect = DataAspect() # Makes the y and x axis scaled equally.
-
-    # Right now there's some duplication: each report struct for this map has the st seconds and cost, each computed
-    # by hand. Obviously not necessary. Will resolve that later TODO
-    stCost = reportStructs[1].st_cost
-
-    sortedReportStruct = sort(reportStructs, by=x -> x.workerCount)
-
-    initialPoints = [(0, stCost)]
-    beautyPoints = [(0, stCost)]
-
-    for reportStruct::OPT1_BenchmarkingReportStruct in sortedReportStruct
-        initialPoint = (reportStruct.workerCount, reportStruct.initialPathCost)
-        beautyPoint = (reportStruct.workerCount, reportStruct.beautifiedPathCost)
-        push!(initialPoints, initialPoint)
-        push!(beautyPoints, beautyPoint)
-    end
-
-    initialXs = [i[1] for i in initialPoints]
-    beautyXs = [b[1] for b in beautyPoints]
-
-    initialYs = [i[2] for i in initialPoints]
-    beautyYs = [b[2] for b in beautyPoints]
-
-    lines!(axis, initialXs, initialYs, color=INITIAL_COLOR, label="Initial Path Cost")
-    scatter!(axis, initialXs, initialYs, color=INITIAL_COLOR, markersize=GRAPH_POINT_SIZE)
-
-
-    lines!(axis, beautyXs, beautyYs, color=BEAUTY_COLOR, label="Beautified Path Cost")
-    scatter!(axis, beautyXs, beautyYs, color=BEAUTY_COLOR, markersize=GRAPH_POINT_SIZE)
-
-    axislegend(
-        axis,
-        "Path cost",
-        position=:rb
-    )
-    return axis
-end
-
-
-
-
-
-
-function OPT1_ProduceBenchmarkGraphs(folderPath::String)
-    if isdir(folderPath) == false
-        error("Folder $(folderPath) does not exist")
-    end
-
-    graphAxes::Vector{GLMakie.Axis} = []
-
-
-    mapNameAndFiles = Dict{String,Vector{OPT1_BenchmarkingReportStruct}}()
-    for file in readdir(folderPath)
-        filePath = joinpath(folderPath, file)
-        if isfile(filePath) == false
-            continue
-        end
-
-
-        deserialized::OPT1_BenchmarkingReportStruct = open(filePath, "r") do file
-            deserialize(file)
-        end
-
-        mapName = GetMapNameFromFile(file)
-        if haskey(mapNameAndFiles, mapName) == false
-            mapNameAndFiles[mapName] = Vector{OPT1_BenchmarkingReportStruct}()
-        end
-        push!(mapNameAndFiles[mapName], deserialized)
-    end
-
-    mapCount = length(keys(mapNameAndFiles))
-
-
-    figureDirectory = joinpath(folderPath, "Figures")
-    mkpath(figureDirectory)
-    for file in readdir(figureDirectory, join=true)
-        if isfile(file)
-            rm(file)
-        end
-    end
-
-    currentFig = Figure(; size=(1600, 900))
-    figs = [currentFig]
-    axesInFig = 0
-
-    currentColumn = 1
-    sortedKeys = sort(collect(keys(mapNameAndFiles)); by=key -> (length(key), key))
-    # for key in sort(collect(keys(mapNameAndFiles)))
-    for key in sortedKeys
-
-        println("There are $(length(mapNameAndFiles[key])) entries for map $(key)")
-        # For every map:
-
-        # First row: Time to complete
-        push!(graphAxes, OPT1_ProduceGraph_totalTime(mapNameAndFiles[key], currentFig, 1, currentColumn))
-
-        # Second row: Path cost
-        push!(graphAxes, OPT1_ProduceGraph_pathCost(mapNameAndFiles[key], currentFig, 2, currentColumn))
-        axesInFig += 2
-        currentColumn += 1
-
-        if axesInFig >= 4
-            currentFig = Figure(; size=(1600, 900))
-            push!(figs, currentFig)
-            axesInFig = 0
-            currentColumn = 1
-        end
-    end
-
-
-    # First row: totalTime, maps on the horizontal
-
-    # Second row: Map Cost, maps on the horizontal
-
-    for (i, fig) in enumerate(figs)
-        save(joinpath(figureDirectory, "BenchmarkFigure_$(i).png"), fig, size=(1600, 900))
-        # display(fig)
-    end
-
-    # println("Press enter to Exit!")
-    # readline()
-    GLMakie.closeall()
-    println("Done!")
-    # println("Exiting...")
-end
 

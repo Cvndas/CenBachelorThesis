@@ -9,7 +9,17 @@ using Dates
 
 
 
-
+function InitializeSeed()::Int
+    config = include("Config.jl")
+    seed = config.seed
+    # seed = 5
+    if seed < 0
+        seed = Int(round(time()))
+    end
+    # println("Initialized with seed $seed")
+    Random.seed!(seed)
+    return seed
+end
 
 
 

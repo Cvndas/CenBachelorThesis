@@ -51,7 +51,7 @@ end
 #= Run with
 include("main.jl"); main_OPT1_SingleRun(_, _);
 =#
-function main_OPT1_SingleRun(workerCount, mazeXY)
+function main_OPT1_SingleRun(workerCount, mazeXY, multiThread)
     Clear()
     RunThreadcountAsserts()
     println("Starting the Run with config[workerCount: $workerCount, mazeXY: $mazeXY]")
@@ -77,7 +77,7 @@ function main_OPT1_SingleRun(workerCount, mazeXY)
         using .CenAstar
 
         randomMazeSpec = RandomMazeSpecification($(mazeXY), $(mazeXY))
-        runConfig::OPT1_RunConfig = OPT1_RunConfig([randomMazeSpec], false, 1)
+        runConfig::OPT1_RunConfig = OPT1_RunConfig([randomMazeSpec], $(multiThread), 1)
 
         MPI.Init()
         comm = MPI.Comm_dup(MPI.COMM_WORLD)
@@ -87,18 +87,17 @@ function main_OPT1_SingleRun(workerCount, mazeXY)
         processorName = MPI.Get_processor_name()
         # println("Hello from $processorName, I am process $rank of $nranks processes!")
 
-        CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, runConfig)
+        CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
 
         MPI.Finalize()
     end
 
     # Here, specify what to run
     run(`$(mpiexec()) -np $(workerCount+1) julia --project=. --threads=2 -e $code`)
-
 end
 
 
-function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
+function main_OPT1_RunA_RunBenchmarks()
     Clear()
     RunThreadcountAsserts()
     println("Starting the Benchmarking Run A")
@@ -117,7 +116,15 @@ function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
         include("CenAstar.jl")
         using .CenAstar
 
-        mazeSizes = [100, 250, 500, 750, 1000, 2000, 5000]
+        mazeSpecs = [
+            RandomMazeSpecification(100, 100),
+            RandomMazeSpecification(250, 250),
+            RandomMazeSpecification(500, 500),
+            RandomMazeSpecification(750, 750),
+            RandomMazeSpecification(1000, 1000),
+            RandomMazeSpecification(2000, 2000),
+            RandomMazeSpecification(5000, 5000)
+        ]
 
         MPI.Init()
         comm = MPI.Comm_dup(MPI.COMM_WORLD)
@@ -127,24 +134,37 @@ function main_MPI_ParallelHierarchicSearch_BenchmarkingRunA()
         processorName = MPI.Get_processor_name()
         # println("Hello from $processorName, I am process $rank of $nranks processes!")
 
-        CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, masterCore, mazeSizes, false)
+        runConfig::OPT1_RunConfig = OPT1_RunConfig(mazeSpecs, false, 3)
+        CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
 
         MPI.Finalize()
     end
 
+
+    # debugFlags = ""
+    # releaseFlags = "--check-bounds=no -O3"
+
+    # release = true
+    # if release
+    #     flags = releaseFlags
+    # else
+    #     flags = debugFlags
+    # end
+
+
     # Here, specify what to run
-    run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
-    run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
-    run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
-    run(`$(mpiexec()) -np 5 julia --project=. -e $code`)
-    run(`$(mpiexec()) -np 6 julia --project=. -e $code`)
-    run(`$(mpiexec()) -np 7 julia --project=. -e $code`)
+    run(`$(mpiexec()) -np 2 julia  --project=. -e $code`)
+    run(`$(mpiexec()) -np 3 julia  --project=. -e $code`)
+    run(`$(mpiexec()) -np 4 julia  --project=. -e $code`)
+    run(`$(mpiexec()) -np 5 julia  --project=. -e $code`)
+    run(`$(mpiexec()) -np 6 julia  --project=. -e $code`)
+    run(`$(mpiexec()) -np 7 julia  --project=. -e $code`)
 end
 
 #= run in the julia repl with
 include("main.jl"); main_MPI_ParallelHierarchicSearch_ProduceBenchmarkGraphs_RunA();
 =#
-function main_MPI_ParallelHierarchicSearch_ProduceBenchmarkGraphs_RunA()
+function main_OPT1_RunA_ProduceGraphs()
     RunThreadcountAsserts()
     runAFolder = joinpath("Benchmarks", "RunA")
     CenAstar.OPT1_ProduceBenchmarkGraphs(runAFolder)
