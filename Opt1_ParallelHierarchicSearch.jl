@@ -1,22 +1,10 @@
 using MPI
 using DataStructures
 using Base.Threads
-# include("OPT1_WorkerEntry.jl")
 
 
 #=
-One very important optimization:
-
-After much benchmarking and eviscerating the previous bottlenecks, I notied that the last worker would triple
-the amount of time on its initial path. This worker would never even finish in time to handle a beautification path,
-forcing another worker to do 2.
-
-Making the heuristic have more influence completely solves this. However, to keep it fair, that same boost would need
-to be applied to the single threaded version.
-=#
-
-#=
-Another important thing to take note of: It appears that the Astar in this implementation is FASTER than
+An important thing to take note of: It appears that the Astar in this implementation is FASTER than
 that of the single threaded astar. It's strange, as the single threaded astar has the benefit of a 2d array
 for maptiles that are indexed directly, while this implementation uses a dictionary.
 
@@ -1426,7 +1414,7 @@ function OPT1_WorkerCore(comm, rank, masterCore, multithread::Bool)
    if multithread
       OPT1_Worker_MT_SolveInitialJobs(w)
    else
-      OPT1_Worker_CompleteJobPair(w, OPT1_PATH_DELIVERY_INITIAL_1, OPT1_PATH_DELIVERY_INITIAL_2)
+      OPT1_Worker_ST_SolveInitialJobs(w)
    end
 
    w.bench.tilesReceivedWhenSolvingInitialPath = length(w.availableTiles)
@@ -1761,6 +1749,7 @@ end
 
 
 function OPT1_Worker_MT_PathfindingThread(w::WorkerState, c::Worker_MT_Communication)
+   T_jobPairStart = time()
    a = Worker_MT_PathState(true, c)
    b = Worker_MT_PathState(false, c)
 
@@ -1784,6 +1773,7 @@ function OPT1_Worker_MT_PathfindingThread(w::WorkerState, c::Worker_MT_Communica
       end
    end
 
+   w.bench.secondsNotSpentDoingWorkInInitialPath = time() - T_jobPairStart - w.bench.rawComputationSeconds_Initial
    PATHFINDER_Println("Pathfinder: We're fully done with the pathfinding thread now")
 end
 
@@ -1807,7 +1797,9 @@ function OPT1_Worker_MT_RunPathfinding(w::WorkerState, pathfindingState::WorkerP
          p.pathTilesNecessary[] = false
       end
 
+      T_beforeComputation = time()
       pathfindingResult = OPT1_CustomAStar(w, pathfindingState)
+      w.bench.rawComputationSeconds_Initial += time() - T_beforeComputation
       if pathfindingResult !== nothing
          p.pathDone = true
          jobCompletionTag = if p.isPathA
@@ -1832,7 +1824,7 @@ end
 
 
 
-function OPT1_Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobBCompletionTag)
+function OPT1_Worker_ST_SolveInitialJobs(w::WorkerState)
    jobASolved::Bool = false
    jobBSolved::Bool = false
 
@@ -1857,7 +1849,7 @@ function OPT1_Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobBComp
             w.jobAState.postponed = true
          else
             jobASolved = true
-            OPT1_Worker_SendCompletedPath(jobA_solveResult, jobACompletionTag, w.comm, w)
+            OPT1_Worker_SendCompletedPath(jobA_solveResult, OPT1_PATH_DELIVERY_INITIAL_1, w.comm, w)
          end
 
       end
@@ -1880,7 +1872,7 @@ function OPT1_Worker_CompleteJobPair(w::WorkerState, jobACompletionTag, jobBComp
             w.jobBState.postponed = true
          else
             jobBSolved = true
-            OPT1_Worker_SendCompletedPath(jobB_solveResult, jobBCompletionTag, w.comm, w)
+            OPT1_Worker_SendCompletedPath(jobB_solveResult, OPT1_PATH_DELIVERY_INITIAL_2, w.comm, w)
          end
 
       end
