@@ -15,6 +15,38 @@ kind of getting destroyed? But even then, many of the mazes aren't even that big
 # Before the following todos, complete the current OPT1 benchmarking.
 
 
+#=
+Alternative idea for the multithreading on the worker
+
+Simply have 2 concurrent queues:
+1. Map request queue
+2. Incoming supplements queue
+
+When the pathfinding thread needs more map data, it simply adds an entry to
+the map request queue.
+When the pathfinding thread sees the request queue is empty, it sleeps and waits for a 
+signal.
+When the pathfinding thread is done processing a new supplement, it just adds it to the 
+map request queue, and sends a signal to the pathfinding thread, which may be sleeping.
+
+Benefits: 
+- Much simpler algorithm
+- Probably more performant, as there's going to be less locking, less waiting. The pathfinding
+  thread will only wait when it absolutely has to. 
+
+The "goes to sleep thing" should be handled like this
+Simply have for "SleepingOnEmptyQueue" locks for both of these queus. When a thread wants to
+add stuff into the queue, it quickly gets this lock, sends the adds to the queue, and
+sends unlocks.
+   
+Since the queue will be under the protection of a lock anyway, the queues don't need to be 
+concurrent datastructures.
+
+Maybe now that I know to be extra careful with variable typos I'll be able to get it done in
+an hour or so.
+
+TODO: Make sure all 
+=#
 
 
 # Sent by master core for the initial delivery of map data, before any jobs are posted.
@@ -158,8 +190,8 @@ mutable struct MasterState
    workerEntries::Vector{OPT1_WorkerEntry}
    maxX::Int32
    maxY::Int32
-   nranks
-   currentLevel
+   nranks::Int
+   currentLevel::Int
 
    initialPaths::Vector{Tuple{MapTile,MapTile}}
    solved_initialPaths::Vector{Vector{MapTile}}
@@ -216,6 +248,43 @@ mutable struct MasterState
       )
    end
 end
+
+
+
+
+mutable struct Worker_MT_Communication_V2
+   supplementRequestQueue::Queue{Tuple{MapTile, MapTile}}
+   lock_supplementRequestQueue::Threads.ReentrantLock
+   cond_supplementRequestQueue::Threads.Condition
+
+   supplementsReadyQueue::Queue{Vector{MapTile}}
+   lock_supplementsReadyQueue::Threads.ReentrantLock
+   cond_supplementsReadyQueue::Threads.Condition
+
+   isDone::Threads.Atomic{Bool}
+   function Worker_MT_Communication_V2()
+      lock_supplementRequestQueue = Threads.ReentrantLock()
+      cond_supplementRequestQueue = Threads.Condition(lock_supplementRequestQueue)
+      lock_supplementsReadyQueue = Threads.ReentrantLock()
+      cond_supplementsReadyQueue = Threads.Condition(lock_supplementsReadyQueue)
+      # TODO: check if I made a typo here.
+      new(
+         Queue{Tuple{MapTile, MapTile}}(),
+         lock_supplementRequestQueue,
+         cond_supplementRequestQueue,
+         #
+         Queue{Vector{MapTile}}(),
+         lock_supplementsReadyQueue,
+         cond_supplementsReadyQueue,
+         #
+         Threads.Atomic{Bool}(false)
+      ) 
+   end
+end
+
+
+
+
 
 # Multicore stuff for the initial solve
 mutable struct Worker_MT_Communication
@@ -287,8 +356,8 @@ end
 
 
 mutable struct WorkerState
-   comm
-   rank
+   comm:: todo figure out the type here
+   rank::Int
    availableTiles::Dict{Tuple{Int32,Int32},MapTile}
 
    maxX::Int32
@@ -1412,7 +1481,8 @@ function OPT1_WorkerCore(comm, rank, masterCore, multithread::Bool)
 
    # The multithreaded initial job solve
    if multithread
-      OPT1_Worker_MT_SolveInitialJobs(w)
+      # OPT1_Worker_MT_SolveInitialJobs(w)
+      OPT1_Worker_MT_SolveInitialJobs_V2(w)
    else
       OPT1_Worker_ST_SolveInitialJobs(w)
    end
@@ -1652,6 +1722,12 @@ function OPT1_Worker_CompleteBeautyJob(w::WorkerState)
 end
 
 
+function OPT1_Worker_MT_SolveInitialJobs_V2(w::WorkerState)
+   c = Worker_MT_Communication_V2()
+   @spawn OPT1_Worker_MT_MPIThread_V2(w, c)
+   OPT1_Worker_MT_PathfindingThread(w, c)
+   println("$(w.rank) completed MT_SolveInitialJobs_V2()")
+end
 
 
 function OPT1_Worker_MT_SolveInitialJobs(w::WorkerState)
@@ -1673,6 +1749,23 @@ end
 
 function MPI_Println(content)
    # println("MPI THREAD $content")
+end
+
+
+function OPT1_Worker_MT_MPIThread_V2(w::WorkerState, c::Worker_MT_Communication_V2)
+   localRequestsFromPathfinder = Queue{Tuple{MapTile, MapTile}}
+
+   while true
+   lock(c.lock_SupplementRequestQueue)
+   if c.isDone[] == true
+      break
+   end
+   # make sure no typos in here 
+   # otherwise, dequeue some data into a local queue
+   while !isempty(c.supplementRequestQueue)
+   unlock(c.lock_supplementRequestQueue)
+   end
+   error("Not finished")
 end
 
 function OPT1_Worker_MT_MPIThread(w::WorkerState, c::Worker_MT_Communication)
@@ -1747,6 +1840,28 @@ function OPT1_Worker_MT_MPIThread(w::WorkerState, c::Worker_MT_Communication)
 end
 
 
+function OPT1_Worker_MT_PathfindingThread_V2(w::WorkerState, c::Worker_MT_Communication_V2)
+   T_jobPairStart - time()
+   while true
+      if w.jobAState. uhh how did I check again? postponed? Check the single-threaded version
+         OPT1_Worker_MT_RunPathfinding_V2(w, w.jobAState, c) 
+      end
+      if w.jobBState. same thing
+         OPT1_Worker_MT_RunPathfinding_V2(w, w.jobBState, c)
+      end
+      if !w.jobAState.postponed && !w.jobBState.postponed
+         break
+      end
+   end
+
+   lock(the request queue lock)
+   signal the cond
+   c.isDone[] = true
+   unlock(the request queue lock)
+
+   error("Not implemented")
+end
+
 
 function OPT1_Worker_MT_PathfindingThread(w::WorkerState, c::Worker_MT_Communication)
    T_jobPairStart = time()
@@ -1777,6 +1892,10 @@ function OPT1_Worker_MT_PathfindingThread(w::WorkerState, c::Worker_MT_Communica
    PATHFINDER_Println("Pathfinder: We're fully done with the pathfinding thread now")
 end
 
+
+function OPT1_Worker_MT_RunPathfinding_V2(w::WorkerState, pathfindingState::WorkerPathfindingState, c::Worker_MT_Communication)
+   error("Not implemented")
+end
 
 function OPT1_Worker_MT_RunPathfinding(w::WorkerState, pathfindingState::WorkerPathfindingState, c::Worker_MT_Communication, p::Worker_MT_PathState)
    if p.pathDone == false

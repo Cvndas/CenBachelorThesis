@@ -67,10 +67,6 @@ function GenerateCoreAppropriateWaypoints(hardcodedWaypoints::Array{MapTile,1}, 
     will first go at a 45 degree angle, then go straight up/down or straight left/right
     =#
 
-    # TODO NEXT SESH:
-    #=
-        If way point is in a wall, move forward/backward along the straight line until a non-wall block is found.
-    =#
 
     straightLine::Array{MapTile,1} = []
 
