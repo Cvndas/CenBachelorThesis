@@ -38,7 +38,7 @@ The "goes to sleep thing" should be handled like this
 Simply have for "SleepingOnEmptyQueue" locks for both of these queus. When a thread wants to
 add stuff into the queue, it quickly gets this lock, sends the adds to the queue, and
 sends unlocks.
-   
+
 Since the queue will be under the protection of a lock anyway, the queues don't need to be 
 concurrent datastructures.
 
@@ -253,7 +253,8 @@ end
 
 
 mutable struct Worker_MT_Communication_V2
-   supplementRequestQueue::Queue{Tuple{MapTile, MapTile}}
+   # True means path A
+   supplementRequestQueue::Queue{Bool}
    lock_supplementRequestQueue::Threads.ReentrantLock
    cond_supplementRequestQueue::Threads.Condition
 
@@ -269,7 +270,7 @@ mutable struct Worker_MT_Communication_V2
       cond_supplementsReadyQueue = Threads.Condition(lock_supplementsReadyQueue)
       # TODO: check if I made a typo here.
       new(
-         Queue{Tuple{MapTile, MapTile}}(),
+         Queue{Bool}(),
          lock_supplementRequestQueue,
          cond_supplementRequestQueue,
          #
@@ -278,7 +279,7 @@ mutable struct Worker_MT_Communication_V2
          cond_supplementsReadyQueue,
          #
          Threads.Atomic{Bool}(false)
-      ) 
+      )
    end
 end
 
@@ -356,7 +357,7 @@ end
 
 
 mutable struct WorkerState
-   comm:: todo figure out the type here
+   comm::MPI.Comm
    rank::Int
    availableTiles::Dict{Tuple{Int32,Int32},MapTile}
 
@@ -570,19 +571,19 @@ function OPT1_GetEstimatedNecessaryCells_StraightLine(wayPointA::MapTile, wayPoi
    push!(diagonals, (leftWayPoint.x, leftWayPoint.y))
    push!(diagonals, (rightWayPoint.x, rightWayPoint.y))
 
-   for x in leftWayPoint.x-1:-1:leftMostX
+   for x in (leftWayPoint.x-1):-1:leftMostX
       push!(diagonals, (x, round(Int32, diagonalY)))
       diagonalY -= slope
    end
 
    diagonalY = Float64(leftWayPoint.y) + slope
-   for x in leftWayPoint.x+1:rightWayPoint.x-1
+   for x in (leftWayPoint.x+1):(rightWayPoint.x-1)
       push!(diagonals, (x, round(Int32, diagonalY)))
       diagonalY += slope
    end
 
    diagonalY += slope
-   for x in rightWayPoint.x+1:rightMostX
+   for x in (rightWayPoint.x+1):rightMostX
       push!(diagonals, (x, round(Int32, diagonalY)))
       diagonalY += slope
    end
@@ -721,7 +722,7 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig::OPT1_RunConf
       config = include("Config.jl")
       iterations = config.AVERAGING_ITERATIONS
 
-      for i in 1:iterations+1
+      for i in 1:(iterations+1)
          if rank == 0
             reportStruct::OPT1_BenchmarkingReportStruct = OPT1_Entry(comm, nranks, rank, runConfig, mazeSpec)
             if i != 1
@@ -821,6 +822,7 @@ function OPT1_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::Stri
          status = MPI.Probe(comm, MPI.Status; source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG)
          source = MPI.Get_source(status)
          tag = MPI.Get_tag(status)
+
          # // ::: -------------------------:: Handling a Map supply request ::------------------------- ::: // 
          if tag == OPT1_MAP_REQUEST
             # println("Master core: Received a map supplement request")
@@ -844,7 +846,7 @@ function OPT1_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::Stri
 
       allDone = AllDone(true, true)
 
-      for i in 1:nranks-1
+      for i in 1:(nranks-1)
          MPI.send(allDone, s.comm, dest=i, tag=OPT1_ALL_DONE)
       end
 
@@ -893,14 +895,13 @@ function OPT1_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::Stri
    end
 
    # // ::: -------------------------:: End of Processing the Results ::------------------------- ::: // 
-   for workerRank in 1:nranks-1
+   for workerRank in 1:(nranks-1)
       benchmarkRequest = Int64(64)
       MPI.send(benchmarkRequest, s.comm; dest=workerRank, tag=OPT1_WORKER_BENCHMARK_REQUEST)
    end
 
-
    workerBenchmarkDatas = Vector{BenchmarkData_WorkerCore}()
-   for _ in 1:nranks-1
+   for _ in 1:(nranks-1)
       workerBenchmarkingEntry = MPI.recv(s.comm, source=MPI.ANY_SOURCE, tag=OPT1_WORKER_BENCHMARK_RESPONSE)
       push!(workerBenchmarkDatas, workerBenchmarkingEntry)
    end
@@ -959,7 +960,6 @@ function OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMa
    # verticalExtension_Default::Int32 = 64
    # horizontalExtension_Default::Int32 = 32
 
-
    currentLevel = 1
 
    verticalExtension::Int32 = verticalExtension_Default
@@ -977,7 +977,7 @@ function OPT1_Master_HandleOfflinePrelude(comm, nranks, computedMaze::ComputedMa
    end
 
    initialPaths::Vector{Tuple{MapTile,MapTile}} = Tuple{MapTile,MapTile}[]
-   for i in 1:length(initialWayPoints)-1
+   for i in 1:(length(initialWayPoints)-1)
       push!(initialPaths, (initialWayPoints[i], initialWayPoints[i+1]))
    end
 
@@ -1527,8 +1527,8 @@ function OPT1_Worker_SendMapRequest(jobState::WorkerPathfindingState, isPathA::B
 end
 
 
-function OPT1_Worker_SendCompletedPath(solvedPath::Array{MapTile}, TAG_TO_USE, comm, w::WorkerState)
-   push!(w.iSendRequests, MPI.Isend(solvedPath, comm, dest=0, tag=TAG_TO_USE))
+function OPT1_Worker_SendCompletedPath(solvedPath::Array{MapTile}, TAG_TO_USE, w::WorkerState)
+   push!(w.iSendRequests, MPI.Isend(solvedPath, w.comm, dest=0, tag=TAG_TO_USE))
 end
 
 
@@ -1639,7 +1639,7 @@ function OPT1_Worker_ReceiveBeautificationJobs!(w::WorkerState)
    endTuple = (beautyJob.wayPointB.x, beautyJob.wayPointB.y)
 
    while (!haskey(w.availableTiles, startTuple) || !haskey(w.availableTiles, endTuple))
-      mapRequest::OPT1_MapRequest = OPT1_MapRequest(beautyJob.wayPointA, beautyJob.wayPointB, false, true)
+      mapRequest::OPT1_MapRequest = OPT1_MapRequest(beautyJob.wayPointA, beautyJob.wayPointB, false, true, (Int32(0), Int32(0)))
       push!(w.iSendRequests, MPI.Isend(mapRequest, w.comm, dest=0, tag=OPT1_MAP_REQUEST))
       OPT1_Worker_ReceiveSupplement(w)
    end
@@ -1716,7 +1716,7 @@ function OPT1_Worker_CompleteBeautyJob(w::WorkerState)
          OPT1_Worker_ReceiveSupplement(w)
       else
          beautyJobSolved = true
-         OPT1_Worker_SendCompletedPath(jobSolveResult, OPT1_PATH_DELIVERY_BEAUTIFIED, w.comm, w)
+         OPT1_Worker_SendCompletedPath(jobSolveResult, OPT1_PATH_DELIVERY_BEAUTIFIED, w)
       end
    end
 end
@@ -1725,8 +1725,7 @@ end
 function OPT1_Worker_MT_SolveInitialJobs_V2(w::WorkerState)
    c = Worker_MT_Communication_V2()
    @spawn OPT1_Worker_MT_MPIThread_V2(w, c)
-   OPT1_Worker_MT_PathfindingThread(w, c)
-   println("$(w.rank) completed MT_SolveInitialJobs_V2()")
+   OPT1_Worker_MT_PathfindingThread_V2(w, c)
 end
 
 
@@ -1753,20 +1752,79 @@ end
 
 
 function OPT1_Worker_MT_MPIThread_V2(w::WorkerState, c::Worker_MT_Communication_V2)
-   localRequestsFromPathfinder = Queue{Tuple{MapTile, MapTile}}
+   mapRequestA = OPT1_MapRequest(w.jobAState.startTile, w.jobAState.endTile, true, false, (Int32(0), Int32(0)))
+   mapRequestB = OPT1_MapRequest(w.jobBState.startTile, w.jobBState.endTile, false, false, (Int32(0), Int32(0)))
+
+   pendingSends = Vector{MPI.Request}()
+   incomingMapSupplements = Vector{Vector{MapTile}}()
+   supplementRequests = Vector{Bool}()
 
    while true
-   lock(c.lock_SupplementRequestQueue)
-   if c.isDone[] == true
-      break
+
+      # +++ +++ +++ supplement REQUEST queue lock obtained
+      lock(c.lock_supplementRequestQueue)
+      if c.isDone[] == true
+         unlock(c.lock_supplementRequestQueue)
+         break
+      end
+      while isempty(c.supplementRequestQueue)
+         wait(c.cond_supplementRequestQueue)
+      end
+      if c.isDone[] == true
+         unlock(c.lock_supplementRequestQueue)
+         break
+      end
+
+      while !isempty(c.supplementRequestQueue)
+         supplementRequest::Bool = dequeue!(c.supplementRequestQueue)
+         push!(supplementRequests, supplementRequest)
+      end
+      unlock(c.lock_supplementRequestQueue)
+      # --- --- --- supplement REQUEST queue lock released
+
+
+
+      for requestIsJobA in supplementRequests
+         if requestIsJobA
+            sendReq = MPI.Isend(mapRequestA, w.comm, dest=0, tag=OPT1_MAP_REQUEST)
+         else
+            sendReq = MPI.Isend(mapRequestB, w.comm, dest=0, tag=OPT1_MAP_REQUEST)
+         end
+         push!(pendingSends, sendReq)
+      end
+
+      for pendingSend in pendingSends
+         MPI.Wait(pendingSend)
+      end
+      empty!(pendingSends)
+
+      for _ in supplementRequests
+         mapSupplyStatus = MPI.Probe(w.comm, MPI.Status, source=0, tag=OPT1_MAP_SUPPLEMENT)
+         incomingTilesSize = MPI.Get_count(mapSupplyStatus, MapTile)
+         mapSupplyDelivery = Array{MapTile,1}(undef, incomingTilesSize)
+         MPI.Recv!(mapSupplyDelivery, w.comm; source=0, tag=OPT1_MAP_SUPPLEMENT)
+         push!(incomingMapSupplements, mapSupplyDelivery)
+      end
+      empty!(supplementRequests)
+
+
+
+      # +++ +++ +++ supplement READY queue lock obtained
+      lock(c.lock_supplementsReadyQueue)
+      for incomingSupplement in incomingMapSupplements
+         push!(c.supplementsReadyQueue, incomingSupplement)
+      end
+      notify(c.cond_supplementsReadyQueue)
+      unlock(c.lock_supplementsReadyQueue)
+      # --- --- --- supplement READY queue lock released
+
+      empty!(incomingMapSupplements)
    end
-   # make sure no typos in here 
-   # otherwise, dequeue some data into a local queue
-   while !isempty(c.supplementRequestQueue)
-   unlock(c.lock_supplementRequestQueue)
-   end
-   error("Not finished")
 end
+
+
+
+
 
 function OPT1_Worker_MT_MPIThread(w::WorkerState, c::Worker_MT_Communication)
    lock(c.lock_MakeSupplementRequest)
@@ -1840,27 +1898,73 @@ function OPT1_Worker_MT_MPIThread(w::WorkerState, c::Worker_MT_Communication)
 end
 
 
+
+
+function _GetASupplement(w::WorkerState, c::Worker_MT_Communication_V2)
+   lock(c.lock_supplementsReadyQueue)
+   while (isempty(c.supplementsReadyQueue))
+      wait(c.cond_supplementsReadyQueue)
+   end
+
+   supplement::Vector{MapTile} = dequeue!(c.supplementsReadyQueue)
+   for suppliedTile::MapTile in supplement
+      @assert !haskey(w.availableTiles, (suppliedTile.x, suppliedTile.y)) "Worker $rank already had the tile $suppliedTile in its storage"
+      w.availableTiles[(suppliedTile.x, suppliedTile.y)] = suppliedTile
+   end
+
+   unlock(c.lock_supplementsReadyQueue)
+end
+
+
+
+
+
 function OPT1_Worker_MT_PathfindingThread_V2(w::WorkerState, c::Worker_MT_Communication_V2)
-   T_jobPairStart - time()
+
+   T_jobPairStart = time()
+   jobASolved::Bool = false
+   jobBSolved::Bool = false
+
+   jobASupplementRequested::Bool = false
+   jobBSupplementRequested::Bool = false
+
    while true
-      if w.jobAState. uhh how did I check again? postponed? Check the single-threaded version
-         OPT1_Worker_MT_RunPathfinding_V2(w, w.jobAState, c) 
+      if jobASupplementRequested
+         # println("Worker $(w.rank) is going to try to get a supplement for job A")
+         _GetASupplement(w, c)
       end
-      if w.jobBState. same thing
-         OPT1_Worker_MT_RunPathfinding_V2(w, w.jobBState, c)
+
+      if jobASolved == false
+         jobASolved = OPT1_Worker_MT_RunPathfinding_V2(w, w.jobAState, c, true)
       end
-      if !w.jobAState.postponed && !w.jobBState.postponed
+      jobASupplementRequested = !jobASolved
+
+      if jobBSupplementRequested
+         # println("Worker $(w.rank) is going to try to get a supplement for job B")
+         _GetASupplement(w, c)
+      end
+
+      if jobBSolved == false
+         jobBSolved = OPT1_Worker_MT_RunPathfinding_V2(w, w.jobBState, c, false)
+      end
+      jobBSupplementRequested = !jobBSolved
+
+      if jobASolved && jobBSolved
          break
       end
    end
 
-   lock(the request queue lock)
-   signal the cond
+   # println("Worker $(w.rank) completed both paths, is going to lock supplement request queue and notify that isdone")
+   lock(c.lock_supplementRequestQueue)
    c.isDone[] = true
-   unlock(the request queue lock)
-
-   error("Not implemented")
+   notify(c.cond_supplementRequestQueue)
+   unlock(c.lock_supplementRequestQueue)
+   # println("Worker $(w.rank) notified the mpi thread that it's done")
 end
+
+
+
+
 
 
 function OPT1_Worker_MT_PathfindingThread(w::WorkerState, c::Worker_MT_Communication)
@@ -1873,10 +1977,10 @@ function OPT1_Worker_MT_PathfindingThread(w::WorkerState, c::Worker_MT_Communica
    end
    while true
       if a.pathDone == false
-         OPT1_Worker_MT_RunPathfinding(w, w.jobAState, c, a)
+         a.pathDone = OPT1_Worker_MT_RunPathfinding(w, w.jobAState, c, a)
       end
       if b.pathDone == false
-         OPT1_Worker_MT_RunPathfinding(w, w.jobBState, c, b)
+         b.pathDone = OPT1_Worker_MT_RunPathfinding(w, w.jobBState, c, b)
       end
       bothDone::Bool = a.pathDone && b.pathDone
       if bothDone
@@ -1893,9 +1997,53 @@ function OPT1_Worker_MT_PathfindingThread(w::WorkerState, c::Worker_MT_Communica
 end
 
 
-function OPT1_Worker_MT_RunPathfinding_V2(w::WorkerState, pathfindingState::WorkerPathfindingState, c::Worker_MT_Communication)
-   error("Not implemented")
+
+
+
+# returns true when the path is done
+function OPT1_Worker_MT_RunPathfinding_V2(w::WorkerState, pathfindingState::WorkerPathfindingState, c::Worker_MT_Communication_V2, isPathA::Bool)::Bool
+   # pathName = if isPathA
+   #    "pathA"
+   # else
+   #    "pathB"
+   # end
+   # println("Worker $(w.rank) is pathfinding on path $pathName")
+   pathfindingResult = OPT1_CustomAStar(w, pathfindingState)
+   if pathfindingResult !== nothing
+      jobCompletionTag = if isPathA
+         OPT1_PATH_DELIVERY_INITIAL_1
+      else
+         OPT1_PATH_DELIVERY_INITIAL_2
+      end
+
+      # println("Worker $(w.rank) comnpleted path $pathName")
+      OPT1_Worker_SendCompletedPath(pathfindingResult, jobCompletionTag, w)
+      return true
+   end
+
+   pathfindingState.postponed = true
+   # println("Worker $(w.rank) is going to try to lock supplement request queue")
+   lock(c.lock_supplementRequestQueue)
+   enqueue!(c.supplementRequestQueue, isPathA)
+   notify(c.cond_supplementRequestQueue)
+   unlock(c.lock_supplementRequestQueue)
+   # println("Worker $(w.rank) unlocked supplement request queueu and notified potential waiter")
+
+   return false
 end
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 function OPT1_Worker_MT_RunPathfinding(w::WorkerState, pathfindingState::WorkerPathfindingState, c::Worker_MT_Communication, p::Worker_MT_PathState)
    if p.pathDone == false
@@ -1926,7 +2074,7 @@ function OPT1_Worker_MT_RunPathfinding(w::WorkerState, pathfindingState::WorkerP
          else
             OPT1_PATH_DELIVERY_INITIAL_2
          end
-         OPT1_Worker_SendCompletedPath(pathfindingResult, jobCompletionTag, w.comm, w)
+         OPT1_Worker_SendCompletedPath(pathfindingResult, jobCompletionTag, w)
       else
          pathfindingState.postponed = true
       end
@@ -1968,7 +2116,7 @@ function OPT1_Worker_ST_SolveInitialJobs(w::WorkerState)
             w.jobAState.postponed = true
          else
             jobASolved = true
-            OPT1_Worker_SendCompletedPath(jobA_solveResult, OPT1_PATH_DELIVERY_INITIAL_1, w.comm, w)
+            OPT1_Worker_SendCompletedPath(jobA_solveResult, OPT1_PATH_DELIVERY_INITIAL_1, w)
          end
 
       end
@@ -1991,7 +2139,7 @@ function OPT1_Worker_ST_SolveInitialJobs(w::WorkerState)
             w.jobBState.postponed = true
          else
             jobBSolved = true
-            OPT1_Worker_SendCompletedPath(jobB_solveResult, OPT1_PATH_DELIVERY_INITIAL_2, w.comm, w)
+            OPT1_Worker_SendCompletedPath(jobB_solveResult, OPT1_PATH_DELIVERY_INITIAL_2, w)
          end
 
       end
