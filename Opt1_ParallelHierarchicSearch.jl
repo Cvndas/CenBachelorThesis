@@ -675,7 +675,7 @@ end
 
 function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig::OPT1_RunConfig)
 
-   config = include("config.jl")
+   config = include("Config.jl")
 
    if runConfig.iterationsForAveraging < 1
       error("Iterations for averaging was $(runConfig.iterationsForAveraging). It has to be 0 minimum.")
@@ -1959,6 +1959,8 @@ function OPT1_Worker_MT_PathfindingThread_V2(w::WorkerState, c::Worker_MT_Commun
    c.isDone[] = true
    notify(c.cond_supplementRequestQueue)
    unlock(c.lock_supplementRequestQueue)
+
+   w.bench.secondsNotSpentDoingWorkInInitialPath = time() - T_jobPairStart - w.bench.rawComputationSeconds_Initial
    # println("Worker $(w.rank) notified the mpi thread that it's done")
 end
 
@@ -2008,7 +2010,9 @@ function OPT1_Worker_MT_RunPathfinding_V2(w::WorkerState, pathfindingState::Work
    #    "pathB"
    # end
    # println("Worker $(w.rank) is pathfinding on path $pathName")
+   T_beforeComputation = time()
    pathfindingResult = OPT1_CustomAStar(w, pathfindingState)
+   w.bench.rawComputationSeconds_Initial += time() - T_beforeComputation
    if pathfindingResult !== nothing
       jobCompletionTag = if isPathA
          OPT1_PATH_DELIVERY_INITIAL_1

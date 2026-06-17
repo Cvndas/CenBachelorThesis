@@ -58,7 +58,7 @@ function main_OPT1_SingleRun(workerCount, mazeXY, multiThread)
     if (workerCount < 1)
         error("Need minimum 1 worker to run this")
     end
-    config = include("config.jl")
+    config = include("Config.jl")
 
     path = config.PATH_SingleRun
     mkpath(path)
@@ -102,7 +102,7 @@ function main_OPT1_RunA_RunBenchmarks()
     RunThreadcountAsserts()
     println("Starting the Benchmarking Run A")
 
-    config = include("config.jl")
+    config = include("Config.jl")
     path = config.PATH_BenchmarkingRun_A
     mkpath(path)
     for file in readdir(path, join=true)
