@@ -1,7 +1,4 @@
-using GLMakie
 using Serialization
-using Colors
-
 
 
 mutable struct Cursor
@@ -188,11 +185,11 @@ function RenderMapBuild()
     walls = MutableMapTile[]
     borders = Tuple{Int32,Int32}[]
 
-    for borderX in 0:s.xMax+1
+    for borderX in 0:(s.xMax+1)
         push!(borders, (Int32(borderX), Int32(0)))
         push!(borders, (Int32(borderX), Int32(s.yMax + 1)))
     end
-    for borderY in 0:s.yMax+1
+    for borderY in 0:(s.yMax+1)
         push!(borders, (Int32(0), Int32(borderY)))
         push!(borders, (Int32(s.xMax + 1), Int32(borderY)))
     end
@@ -258,7 +255,7 @@ function ResizeMaze(resizeSymbol)
         newMap = Matrix{MutableMapTile}(undef, s.xMax, s.yMax)
 
         for i in 1:s.xMax
-            for j in 1:s.yMax-1
+            for j in 1:(s.yMax-1)
                 newMap[i, j] = s.mapTiles[i, j]
             end
         end
@@ -288,7 +285,7 @@ function ResizeMaze(resizeSymbol)
         s.xMax += 1
         newMap = Matrix{MutableMapTile}(undef, s.xMax, s.yMax)
 
-        for i in 1:s.xMax-1
+        for i in 1:(s.xMax-1)
             for j in 1:s.yMax
                 newMap[i, j] = s.mapTiles[i, j]
             end
@@ -321,7 +318,7 @@ function ResizeMaze(resizeSymbol)
         newMap = Matrix{MutableMapTile}(undef, s.xMax, s.yMax)
 
         for i in 1:s.xMax
-            for j in 1:s.yMax-1
+            for j in 1:(s.yMax-1)
                 newMap[i, j+1] = s.mapTiles[i, j]
             end
         end
@@ -364,7 +361,7 @@ function ResizeMaze(resizeSymbol)
         s.xMax += 1
         newMap = Matrix{MutableMapTile}(undef, s.xMax, s.yMax)
 
-        for i in 1:s.xMax-1
+        for i in 1:(s.xMax-1)
             for j in 1:s.yMax
                 newMap[i+1, j] = s.mapTiles[i, j]
             end

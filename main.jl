@@ -2,6 +2,13 @@ include("CenAstar.jl")
 using .CenAstar
 using MPI
 
+function IsDas5()
+    hostname = get(ENV, "HOSTNAME", "")
+    res = occursin("node", hostname) || occursin("das5", hostname) || occursin("fs0", hostname)
+    # println("On Das5: $res")
+    return res
+end
+
 #= run with
 Cen.Clear()
  =#
@@ -48,6 +55,45 @@ function RunThreadcountAsserts()
     end
 end
 
+
+
+function main_OPT1_DasBenchmarks()
+    Clear()
+    if IsDas5() == false
+        error("This function only runs on DAS")
+    end
+
+    RunThreadcountAsserts()
+    MPI.Init()
+    comm = MPI.Comm_dup(MPI.COMM_WORLD)
+    nranks = MPI.Comm_size(comm)
+    rank = MPI.Comm_rank(comm)
+    processorName = MPI.Get_processor_name()
+
+    config = include("Config.jl")
+    path = "$(config.PATH_DasRun)_with_$(nranks)_ranks"
+    mkpath(path)
+    # for file in readdir(path, join=true)
+    #     if isfile(file)
+    #         rm(file)
+    #     end
+    # end
+    println("Cleared the old benchmarking data in $path")
+
+    mazeXYs = [100, 200, 500, 1000, 2000, 5000]
+    mazeSpecs = []
+    for mazeXY in mazeXYs
+        push!(mazeSpecs, RandomMazeSpecification(mazeXY, mazeXY))
+    end
+
+    runConfig::OPT1_RunConfig = OPT1_RunConfig(mazeSpecs, false, path)
+    println("Hello from $processorName on DAS-5, I am process $rank of $nranks processes!")
+    CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
+    MPI.Finalize()
+end
+
+
+
 #= Run with
 include("main.jl"); main_OPT1_SingleRun(_, _);
 =#
@@ -69,15 +115,8 @@ function main_OPT1_SingleRun(workerCount, mazeXY, multiThread)
     end
     println("Cleared the old benchmarking data in $path")
 
-
-
-    code = quote
-        using MPI
-        include("CenAstar.jl")
-        using .CenAstar
-
-        randomMazeSpec = RandomMazeSpecification($(mazeXY), $(mazeXY))
-        runConfig::OPT1_RunConfig = OPT1_RunConfig([randomMazeSpec], $(multiThread), 1)
+    if IsDas5()
+        println("RUNNING ON DAS-5")
 
         MPI.Init()
         comm = MPI.Comm_dup(MPI.COMM_WORLD)
@@ -85,15 +124,42 @@ function main_OPT1_SingleRun(workerCount, mazeXY, multiThread)
         rank = MPI.Comm_rank(comm)
         masterCore = 0
         processorName = MPI.Get_processor_name()
-        # println("Hello from $processorName, I am process $rank of $nranks processes!")
+
+        randomMazeSpec = RandomMazeSpecification(mazeXY, mazeXY)
+        runConfig::OPT1_RunConfig = OPT1_RunConfig([randomMazeSpec], multiThread, path)
+        println("Hello from $processorName on DAS-5, I am process $rank of $nranks processes!")
 
         CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
 
         MPI.Finalize()
+    else
+        code = quote
+            using MPI
+            include("CenAstar.jl")
+            using .CenAstar
+
+            config = include("Config.jl")
+
+            randomMazeSpec = RandomMazeSpecification($(mazeXY), $(mazeXY))
+            runConfig::OPT1_RunConfig = OPT1_RunConfig([randomMazeSpec], $(multiThread), config.PATH_SingleRun)
+
+            MPI.Init()
+            comm = MPI.Comm_dup(MPI.COMM_WORLD)
+            nranks = MPI.Comm_size(comm)
+            rank = MPI.Comm_rank(comm)
+            masterCore = 0
+            processorName = MPI.Get_processor_name()
+            # println("Hello from $processorName, I am process $rank of $nranks processes!")
+
+            CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
+
+            MPI.Finalize()
+        end
+
+        run(`$(mpiexec()) -np $(workerCount+1) julia --project=. --threads=2 -e $code`)
     end
 
-    # Here, specify what to run
-    run(`$(mpiexec()) -np $(workerCount+1) julia --project=. --threads=2 -e $code`)
+
 end
 
 
@@ -134,7 +200,7 @@ function main_OPT1_RunA_RunBenchmarks()
         processorName = MPI.Get_processor_name()
         # println("Hello from $processorName, I am process $rank of $nranks processes!")
 
-        runConfig::OPT1_RunConfig = OPT1_RunConfig(mazeSpecs, false, 3)
+        runConfig::OPT1_RunConfig = OPT1_RunConfig(mazeSpecs, false, path)
         CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
 
         MPI.Finalize()
@@ -167,7 +233,12 @@ include("main.jl"); main_MPI_ParallelHierarchicSearch_ProduceBenchmarkGraphs_Run
 function main_OPT1_RunA_ProduceGraphs()
     RunThreadcountAsserts()
     runAFolder = joinpath("Benchmarks", "RunA")
-    CenAstar.OPT1_ProduceBenchmarkGraphs(runAFolder)
+    CenAstar.OPT1_ProduceBenchmarkingGraphs_V2(runAFolder)
+end
+
+function main_OPT1_DAS5_ProduceGraphs()
+    benchmarkFolder = joinpath("Das5 Benchmark Data") 
+    CenAstar.OPT1_ProduceBenchmarkingGraphs_V2(benchmarkFolder)
 end
 
 #= run in the julia repl with

@@ -1,7 +1,10 @@
 
-using GLMakie
-using Colors
-using Makie.Colors
+if IsDas5() == false
+    using GLMakie
+    using Colors
+    using Makie.Colors
+end
+
 using Random
 using Dates
 

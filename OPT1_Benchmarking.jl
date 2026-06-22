@@ -695,5 +695,11 @@ end
 
 
 
+function OPT1_GenerateReportFilename(reportStruct::OPT1_BenchmarkingReportStruct)
+    mapName = replace(reportStruct.mapName, ":" => "x")
+    fileName::String = "OPT1_---$(mapName)---_$(reportStruct.workerCount+1)Ranks.BENCHMARK"
+    return fileName
+end
+
 
 

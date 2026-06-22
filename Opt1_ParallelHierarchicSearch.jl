@@ -80,10 +80,10 @@ const OPT1_ALL_DONE = 11
 mutable struct OPT1_RunConfig
    mazeSpecs::Vector{Union{HandcraftedMazeSpecification,RandomMazeSpecification}}
    multithread::Bool
-   iterationsForAveraging::Int
+   benchmarkOutputPath::String
 
-   function OPT1_RunConfig(mazeSpecs, multithread, iterationsForAveraging)
-      new(Vector{Union{HandcraftedMazeSpecification,RandomMazeSpecification}}(mazeSpecs), multithread, iterationsForAveraging)
+   function OPT1_RunConfig(mazeSpecs, multithread, benchmarkOutputPath)
+      new(Vector{Union{HandcraftedMazeSpecification,RandomMazeSpecification}}(mazeSpecs), multithread, benchmarkOutputPath)
    end
 end
 
@@ -132,6 +132,9 @@ mutable struct OPT1_WorkerEntry
    workerLevel_A::Int
    workerLevel_B::Int
 
+   workerLevel_Global::Int
+
+
    # Initial paths
    solvedPathA::Union{Array{MapTile,1},Nothing}
    solvedPathB::Union{Array{MapTile,1},Nothing}
@@ -144,7 +147,7 @@ mutable struct OPT1_WorkerEntry
    jobB_wayPoints::Tuple{MapTile,MapTile}
 
    function OPT1_WorkerEntry(workerRank::Int, sentMinMax::Array{Union{MinMaxY,Nothing}}, jobA_wayPoints, jobB_wayPoints)
-      new(workerRank, 1, 1, nothing, nothing, sentMinMax, jobA_wayPoints, jobB_wayPoints)
+      new(workerRank, 1, 1, 1, nothing, nothing, sentMinMax, jobA_wayPoints, jobB_wayPoints)
    end
 end
 
@@ -427,6 +430,19 @@ function OPT1_WorkerCompletedPathBOfInitialJob(workerEntry::OPT1_WorkerEntry)
    return workerEntry.solvedPathB !== nothing
 end
 
+function OPT1_UpdateRecord_V2(record::OPT1_WorkerEntry, mapRequest::OPT1_MapRequest)
+   if mapRequest.isPathA
+      record.workerLevel_A += 1
+   elseif mapRequest.levelUpBoth
+      beautyLevel = max(record.workerLevel_A, record.workerLevel_B) + 1
+      record.workerLevel_A = beautyLevel
+      record.workerLevel_B = beautyLevel
+   else
+      record.workerLevel_B += 1
+   end
+
+   record.workerLevel_Global = max(record.workerLevel_A, record.workerLevel_B)
+end
 
 function OPT1_UpdateRecord(record::OPT1_WorkerEntry, mapRequest::OPT1_MapRequest)
    if mapRequest.isPathA
@@ -437,6 +453,7 @@ function OPT1_UpdateRecord(record::OPT1_WorkerEntry, mapRequest::OPT1_MapRequest
    else
       record.workerLevel_B += 1
    end
+   record.workerLevel_Global += 1
 end
 
 
@@ -677,17 +694,11 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig::OPT1_RunConf
 
    config = include("Config.jl")
 
-   if runConfig.iterationsForAveraging < 1
+   if config.AVERAGING_ITERATIONS < 1
       error("Iterations for averaging was $(runConfig.iterationsForAveraging). It has to be 0 minimum.")
    end
 
-   singleRun = runConfig.iterationsForAveraging == 1
-   if singleRun
-      path = config.PATH_SingleRun
-   else
-      path = config.PATH_BenchmarkingRun_A
-   end
-
+   path = runConfig.benchmarkOutputPath
    mkpath(path)
 
    for mazeSpec::Union{HandcraftedMazeSpecification,RandomMazeSpecification} in runConfig.mazeSpecs
@@ -748,7 +759,7 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig::OPT1_RunConf
             serialize(file, averageReport)
          end
 
-         if singleRun
+         if path == config.PATH_SingleRun && IsDas5() == false
             println("Constructing the benchmark graph for the single run")
             OPT1_ProduceBenchmarkGraphs(path)
          end
@@ -886,7 +897,8 @@ function OPT1_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::Stri
       (s.computedMaze.startTile.x, s.computedMaze.startTile.y),
       (s.computedMaze.endTile.x, s.computedMaze.endTile.y)
    )
-   fig = Figure(; size=(1600, 900))
+
+   # fig = Figure(; size=(1600, 900))
    # initialImg = CenAstar.ShowMaze(initialSolve, fig, 1)
    # beautyImg = CenAstar.ShowMaze(beautySolve, fig, 2)
 
@@ -1138,9 +1150,23 @@ end
 
 
 function OPT1_Master_RespondToMapRequest(s::MasterState, mapRequest::OPT1_MapRequest, source)
-   OPT1_UpdateRecord(s.workerEntries[source], mapRequest)
-   previousLevel = s.currentLevel
-   s.currentLevel = OPT1_TryLevelUp(s.workerEntries)
+   config = include("Config.jl")
+   tryLevelingStrategy_V2 = config.USE_LEVELING_STRATEGY_V2
+
+   # Hacky fix to test if this will work
+   if tryLevelingStrategy_V2
+      OPT1_UpdateRecord_V2(s.workerEntries[source], mapRequest)
+      # s.currentLevel = s.workerEntries[source].workerLevel_Global
+      s.currentLevel = if mapRequest.isPathA
+         s.workerEntries[source].workerLevel_A
+      else
+         s.workerEntries[source].workerLevel_B
+      end
+   else
+      OPT1_UpdateRecord(s.workerEntries[source], mapRequest)
+      s.currentLevel = OPT1_TryLevelUp(s.workerEntries)
+   end
+   # previousLevel = s.currentLevel
    # leveledUp = s.currentLevel > previousLevel
 
    # println("Map request response. Level is now $(s.currentLevel)")
@@ -1506,10 +1532,10 @@ function OPT1_WorkerCore(comm, rank, masterCore, multithread::Bool)
 
    # benchmarkingRequestBuffer_ref = Ref{OPT1_WorkerBenchmarkingDataRequest}()
 
-   benchmarkingRequestBuffer = Vector{Int64}
-   benchmarkingRequestBuffer = MPI.recv(comm; source=masterCore, tag=OPT1_WORKER_BENCHMARK_REQUEST)
+   _ = MPI.recv(comm; source=masterCore, tag=OPT1_WORKER_BENCHMARK_REQUEST)
 
    MPI.send(w.bench, comm; dest=masterCore, tag=OPT1_WORKER_BENCHMARK_RESPONSE)
+   w.bench.totalMapTilesCollected = length(keys(w.availableTiles))
 
    for iSendRequest::MPI.Request in w.iSendRequests
       MPI.Wait(iSendRequest)
@@ -1724,7 +1750,7 @@ end
 
 function OPT1_Worker_MT_SolveInitialJobs_V2(w::WorkerState)
    c = Worker_MT_Communication_V2()
-   @spawn OPT1_Worker_MT_MPIThread_V2(w, c)
+   Threads.@spawn OPT1_Worker_MT_MPIThread_V2(w, c)
    OPT1_Worker_MT_PathfindingThread_V2(w, c)
 end
 
