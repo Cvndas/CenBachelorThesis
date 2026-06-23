@@ -17,22 +17,51 @@ function GetMapNameFromFile(fileName::String)
 end
 
 
-function GR_CreateLegend(axis, legendTitle, position)
-    axislegend(axis, legendTitle, position=position, backgroundcolor=RGBA(1, 1, 1, 0.7))
-end
 
 function OPT1_GetFigureSize()
     scaler = 0.8
     return (1000, 600) .* scaler
 end
 
+function GR_CreateLegend(axis, legendTitle, legendOnTop)
+    # axislegend(axis, legendTitle, position=GR_GetLegendPosition(legendOnTop), backgroundcolor=RGBA(1, 1, 1, 0.7))
+    axislegend(axis, position=GR_GetLegendPosition(legendOnTop), backgroundcolor=RGBA(1, 1, 1, 0.7))
+end
 
-function OPT1_CreateFigure()
+function GR_GetLegendPosition(legendOnTop::Bool)
+    return if legendOnTop
+        :rt
+    else
+        :rb
+    end
+end
+
+function GR_GetSortedReportStructs(reportStructs::Vector{OPT1_BenchmarkingReportStruct})
+    return sort(reportStructs, by=x -> x.workerCount)
+end
+
+function GR_GetSharedXs_WorkerCount(sortedReportStructs::Vector{OPT1_BenchmarkingReportStruct})
+    sharedXs = []
+    for reportStruct::OPT1_BenchmarkingReportStruct in sortedReportStructs
+        push!(sharedXs, reportStruct.workerCount)
+    end
+    return sharedXs
+end
+
+function GR_CreateFigure()
     return Figure(; size=OPT1_GetFigureSize())
 end
 
+function GR_Lines!(axis, xs, ys, color, label)
+    lines!(axis, xs, ys, color=color, label=label)
+end
 
-function OPT1_CreateGraphTitle(reportStructs::Vector{OPT1_BenchmarkingReportStruct}, descriptionPart::String)
+function GR_Scatter!(axis, xs, ys, color)
+    scatter!(axis, xs, ys, color=color, markersize=GRAPH_POINT_SIZE)
+end
+
+
+function GR_CreateGraphTitle(reportStructs::Vector{OPT1_BenchmarkingReportStruct}, descriptionPart::String)
     mapNamePretty = reportStructs[1].mapName
     mapNamePretty = replace(mapNamePretty, "_" => " ")
     mapNamePretty = replace(mapNamePretty, "Seed" => "SEEDSTART")
@@ -49,7 +78,7 @@ function OPT1_CreateGraphTitle(reportStructs::Vector{OPT1_BenchmarkingReportStru
     return "$mapNamePretty - $(descriptionPart)"
 end
 
-function OPT1_CreateGraphAxis(reportStructs::Vector{OPT1_BenchmarkingReportStruct}, fig, ylabel, title; xlabel="Worker Count")
+function GR_CreateGraphAxis(reportStructs::Vector{OPT1_BenchmarkingReportStruct}, fig, ylabel, title; xlabel="Worker Count")
     # sortedWorkerCounts = []
     # push!(workerValues, 1)
     # currentProcessor = 1
@@ -62,6 +91,8 @@ function OPT1_CreateGraphAxis(reportStructs::Vector{OPT1_BenchmarkingReportStruc
     # while currentProcessor < processorMax
     #     currentProcessor *= 2
     #     push!(workerValues, currentProcessor)
+
+    # TODO: perhaps label the lhs as actual miliseconds, rather than 2^something. At least be an option. ask prof
 
     workerLabels = [string(v) for v in sortedWorkerCounts]
     xTicks = (sortedWorkerCounts, workerLabels)
@@ -154,10 +185,10 @@ function OPT1_ProduceBenchmarkingGraphs_V2(folderPath::String)
     for (mapName::String, reportStructs::Vector{OPT1_BenchmarkingReportStruct}) in mapNameAndReportStructs
         mapGraphs = Vector{GLMakie.Figure}()
 
-        push!(mapGraphs, OPT1_ProduceGraph_TotalTime(reportStructs, true);)
-        push!(mapGraphs, OPT1_ProduceGraph_TotalTime(reportStructs, false);)
-
-        # push!(mapGraphs, OPT1_ProduceGraph_Speedup(reportStructs))
+        push!(mapGraphs, GR_ProduceGraph_TotalTime(reportStructs, true);)
+        push!(mapGraphs, GR_ProduceGraph_TotalTime(reportStructs, false))
+        push!(mapGraphs, GR_ProduceGraph_Speedup(reportStructs, true))
+        push!(mapGraphs, GR_ProduceGraph_Speedup(reportStructs, false))
         # push!(mapGraphs, OPT1_ProduceGraph_PathCost(reportStructs))
         legendOnTop = true
         for (i, graph) in enumerate(mapGraphs)

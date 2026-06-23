@@ -6,34 +6,68 @@
 
 
 
-function OPT1_ProduceGraph_Speedup(reportStructs::Vector{OPT1_BenchmarkingReportStruct})
-    error("Not Implemented")
+function GR_ProduceGraph_Speedup(reportStructs::Vector{OPT1_BenchmarkingReportStruct}, legendOnTop::Bool)
+    fig = GR_CreateFigure()
+    title = GR_CreateGraphTitle(reportStructs, "Speedup")
+    axis = GR_CreateGraphAxis(reportStructs, fig, "Speedup", title)
+    sortedReportStructs = GR_GetSortedReportStructs(reportStructs)
+    stSolve = sortedReportStructs[1].st_seconds
+    st_Ys = [1]
+    sharedXs = GR_GetSharedXs_WorkerCount(sortedReportStructs)
+
+    initialYs = []
+    beautyYs = []
+    idealYs = []
+
+    for r::OPT1_BenchmarkingReportStruct in sortedReportStructs
+
+        initialSpeedup = stSolve / r.secondsFromStartToHavingReceivedAllInitialPaths
+        push!(initialYs, initialSpeedup)
+
+        beautySpeedup = stSolve / r.secondsFromStartToHavingReceivedAllBeautifiedPaths
+        push!(beautyYs, beautySpeedup)
+
+        idealSpeedup = r.workerCount
+        push!(idealYs, idealSpeedup)
+    end
+
+    hlines!(axis, st_Ys[1], color=ST_COLOR, label="Single=threaded")
+
+    GR_Lines!(axis, sharedXs, initialYs, INITIAL_COLOR, "Initial path")
+    GR_Scatter!(axis, sharedXs, initialYs, INITIAL_COLOR)
+
+    GR_Lines!(axis, sharedXs, beautyYs, BEAUTY_COLOR, "Beautfied path")
+    GR_Scatter!(axis, sharedXs, beautyYs, BEAUTY_COLOR)
+
+    GR_Lines!(axis, sharedXs, idealYs, IDEAL_COLOR, "Ideal speedup")
+    GR_Scatter!(axis, sharedXs, idealYs, BEAUTY_COLOR)
+
+    GR_CreateLegend(axis, "Speedup", legendOnTop)
+
+    return fig
 end
 
-function OPT1_ProduceGraph_TotalTime(reportStructs::Vector{OPT1_BenchmarkingReportStruct}, legendOnTop)
-    fig = OPT1_CreateFigure() # Semicolon necessary to stop it from showing up? maybe
-    title = OPT1_CreateGraphTitle(reportStructs, "Time to solve paths")
-    axis = OPT1_CreateGraphAxis(reportStructs, fig, "Solve duration (seconds)", title)
+function GR_ProduceGraph_TotalTime(reportStructs::Vector{OPT1_BenchmarkingReportStruct}, legendOnTop)
+    fig = GR_CreateFigure() # Semicolon necessary to stop it from showing up? maybe
+    title = GR_CreateGraphTitle(reportStructs, "Time to solve paths")
+    axis = GR_CreateGraphAxis(reportStructs, fig, "Solve duration (Miliseconds)", title)
+    sortedReportStructs = GR_GetSortedReportStructs(reportStructs)
 
     # Sorting along the x axis of the eventual figure
-    sortedReportStructs = sort(reportStructs, by=x -> x.workerCount)
-
     #= 3 lines:
     1. ST (which is a single point)
     2. Initial
     3. Beauty
     =#
     # stPoint
-    st_Xs = [0]
     st_Ys = ToMs([sortedReportStructs[1].st_seconds])
 
-    sharedXs = []
+    sharedXs = GR_GetSharedXs_WorkerCount(sortedReportStructs)
     initialYs = []
     beautyYs = []
     idealYs = []
 
     for reportStruct::OPT1_BenchmarkingReportStruct in sortedReportStructs
-        push!(sharedXs, reportStruct.workerCount)
         push!(initialYs, ToMs(reportStruct.secondsFromStartToHavingReceivedAllInitialPaths))
         push!(beautyYs, ToMs(reportStruct.secondsFromStartToHavingReceivedAllBeautifiedPaths))
         push!(idealYs, st_Ys[1] / reportStruct.workerCount)
@@ -53,23 +87,17 @@ function OPT1_ProduceGraph_TotalTime(reportStructs::Vector{OPT1_BenchmarkingRepo
     lines!(axis, sharedXs, idealYs, color=IDEAL_COLOR, label="Ideal solve")
     scatter!(axis, sharedXs, idealYs, color=IDEAL_COLOR, markersize=GRAPH_POINT_SIZE)
 
-    legendPosition = if legendOnTop
-        :rt
-    else
-        :rb
-    end
-    GR_CreateLegend(axis, "Seconds to build path", legendPosition)
-    # axislegend(axis, "Seconds to build path", position=legendPosition, backgroundcolor=RGBA(1, 1, 1, 0.7))
+    GR_CreateLegend(axis, "Seconds to build path", legendOnTop)
 
     return fig
 end
 
 
 
-function OPT1_ProduceGraph_PathCost(reportStructs::Vector{OPT1_BenchmarkingReportStruct})
-    fig = OPT1_CreateFigure()
-    title = OPT1_CreateGraphTitle(reportStructs, ": Path Cost")
-    axis = OPT1_CreateGraphAxis(reportStructs, fig, "Path Cost", title)
+function GR_ProduceGraph_PathCost(reportStructs::Vector{OPT1_BenchmarkingReportStruct})
+    fig = GR_CreateFigure()
+    title = GR_CreateGraphTitle(reportStructs, ": Path Cost")
+    axis = GR_CreateGraphAxis(reportStructs, fig, "Path Cost", title)
     axis.backgroundcolor = :lightgrey
     # axis.aspect = DataAspect() # Makes the y and x axis scaled equally.
 
