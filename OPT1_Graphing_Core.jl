@@ -5,6 +5,10 @@ const INITIAL_COLOR = :green
 const ST_COLOR = :blue
 const IDEAL_COLOR = :magenta
 
+const WORST_COLOR = :red
+const BEST_COLOR = :green
+const AVERAGE_COLOR = :blue
+
 include("OPT1_Graphing_Graphs.jl")
 
 
@@ -52,8 +56,20 @@ function GR_CreateFigure()
     return Figure(; size=OPT1_GetFigureSize())
 end
 
-function GR_Lines!(axis, xs, ys, color, label)
-    lines!(axis, xs, ys, color=color, label=label)
+
+function GR_LineAndPoints!(axis, xs, ys, color, label; dotted=false)
+    GR_Lines!(axis, xs, ys, color, label, dotted=dotted)
+    GR_Scatter!(axis, xs, ys, color)
+end
+
+function GR_Lines!(axis, xs, ys, color, label; dotted=false)
+    linestyle = if dotted
+        :dot
+    else
+        :solid
+    end
+
+    lines!(axis, xs, ys, color=color, label=label, linestyle=linestyle)
 end
 
 function GR_Scatter!(axis, xs, ys, color)
@@ -78,20 +94,83 @@ function GR_CreateGraphTitle(reportStructs::Vector{OPT1_BenchmarkingReportStruct
     return "$mapNamePretty - $(descriptionPart)"
 end
 
+function GR_CreateGraphAxis_CustomRange(reportStructs::Vector{OPT1_BenchmarkingReportStruct}, fig, ylabel, title, min, max, interval; xlabel="Worker Count")
+    sortedWorkerCounts = sort(unique([r.workerCount for r in reportStructs]), by=x -> x)
+    workerLabels = [string(v) for v in sortedWorkerCounts]
+    xTicks = (sortedWorkerCounts, workerLabels)
+
+    yTicks = []
+    current = min
+    while current < max
+        push!(yTicks, current)
+        current += interval
+    end
+
+    return Axis(
+        fig[1, 1],
+        xlabel=xlabel,
+        ylabel=ylabel,
+        title=title,
+        xticks=xTicks,
+        yticks=yTicks,
+        yscale=identity,
+        xscale=log2
+    )
+
+end
+
+function GR_CreateGraphAxis_LinearY(reportStructs::Vector{OPT1_BenchmarkingReportStruct}, fig, ylabel, title)
+    sortedWorkerCounts = sort(unique([r.workerCount for r in reportStructs]), by=x -> x)
+
+    workerLabels = [string(v) for v in sortedWorkerCounts]
+    xTicks = (sortedWorkerCounts, workerLabels)
+    xlabel = "Worker Count"
+
+    axis = Axis(
+        fig[1, 1],
+        xlabel=xlabel,
+        ylabel=ylabel,
+        title=title,
+        xticks=xTicks,
+        yscale=identity,
+        xscale=log2
+    )
+
+    return axis
+end
+function GR_CreateGraphAxis_LinearY_Increments(reportStructs::Vector{OPT1_BenchmarkingReportStruct}, fig, ylabel, title, minVal, maxVal)
+    sortedWorkerCounts = sort(unique([r.workerCount for r in reportStructs]), by=x -> x)
+
+    workerLabels = [string(v) for v in sortedWorkerCounts]
+    xTicks = (sortedWorkerCounts, workerLabels)
+    xlabel = "Worker Count"
+
+    yTicks = []
+    current = minVal
+    increment = (maxVal - minVal) / 10
+    while current < maxVal
+        push!(yTicks, current)
+        current += increment
+    end
+
+    axis = Axis(
+        fig[1, 1],
+        xlabel=xlabel,
+        ylabel=ylabel,
+        title=title,
+        xticks=xTicks,
+        yticks=yTicks,
+        yscale=identity,
+        xscale=log2
+    )
+
+    return axis
+
+end
+
 function GR_CreateGraphAxis(reportStructs::Vector{OPT1_BenchmarkingReportStruct}, fig, ylabel, title; xlabel="Worker Count")
-    # sortedWorkerCounts = []
-    # push!(workerValues, 1)
-    # currentProcessor = 1
-    # processorMax = maximum(p.workerCount for p in reportStructs)
 
     sortedWorkerCounts = sort(unique([r.workerCount for r in reportStructs]), by=x -> x)
-    # for workerCount in sortedWorkerCounts
-    #     push!(sortedWorkerCounts, workerCount)
-    # end
-    # while currentProcessor < processorMax
-    #     currentProcessor *= 2
-    #     push!(workerValues, currentProcessor)
-
     # TODO: perhaps label the lhs as actual miliseconds, rather than 2^something. At least be an option. ask prof
 
     workerLabels = [string(v) for v in sortedWorkerCounts]
@@ -187,8 +266,17 @@ function OPT1_ProduceBenchmarkingGraphs_V2(folderPath::String)
 
         push!(mapGraphs, GR_ProduceGraph_TotalTime(reportStructs, true);)
         push!(mapGraphs, GR_ProduceGraph_TotalTime(reportStructs, false))
+
         push!(mapGraphs, GR_ProduceGraph_Speedup(reportStructs, true))
         push!(mapGraphs, GR_ProduceGraph_Speedup(reportStructs, false))
+
+        push!(mapGraphs, GR_ProduceGraph_ComputationFraction(reportStructs, true))
+        push!(mapGraphs, GR_ProduceGraph_ComputationFraction(reportStructs, false))
+
+        push!(mapGraphs, GR_ProduceGraph_TilesReceivedVsTilesExplored(reportStructs, true))
+        push!(mapGraphs, GR_ProduceGraph_TilesReceivedVsTilesExplored(reportStructs, false))
+
+
         # push!(mapGraphs, OPT1_ProduceGraph_PathCost(reportStructs))
         legendOnTop = true
         for (i, graph) in enumerate(mapGraphs)

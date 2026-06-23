@@ -375,6 +375,8 @@ mutable struct WorkerState
 
    # This holds iSend requests, so they aren't garbage collected until the full operation is done
    iSendRequests::Vector{MPI.Request}
+
+   exploredTiles::Set{MapTile}
 end
 
 
@@ -761,7 +763,7 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig::OPT1_RunConf
 
          if path == config.PATH_SingleRun && IsDas5() == false
             println("Constructing the benchmark graph for the single run")
-            OPT1_ProduceBenchmarkGraphs(path)
+            OPT1_ProduceBenchmarkingGraphs_V2(path)
          end
 
          println("Completed the benchmarking for a maze of size $(mazeSizeX)x$(mazeSizeY) with $(nranks) processors, of which $(nranks-1) were workers.")
@@ -1174,6 +1176,7 @@ function OPT1_Master_RespondToMapRequest(s::MasterState, mapRequest::OPT1_MapReq
 
 
    # Actual grows function
+   # TODO: Find the proper growth function. 
    s.verticalExtension = s.verticalExtension_Default * (s.currentLevel * 3)
    s.horizontalExtension = s.horizontalExtension_Default * (s.currentLevel * 3)
 
@@ -1526,6 +1529,8 @@ function OPT1_WorkerCore(comm, rank, masterCore, multithread::Bool)
    w.bench.solvingBeautifiedPathAfterReceivingBeautificationJob = time() - w.bench.timeOfReceivingBeauticationJob
    w.bench.secondsFromReceivingJobToHavingSentBeautifiedPaths = time() - w.bench.timeOfReceivingInitialJob
 
+   w.bench.tilesExplored = length(w.exploredTiles)
+   w.bench.totalMapTilesCollected = length(keys(w.availableTiles))
    # Wait until we receive a benchmarking request from the master. We don't want to pollute MPI
    # when other workers are still busy.
    # benchmarkingRequestStatus = MPI.Probe(comm, MPI.Status, source=masterCore, tag=OPT1_WORKER_BENCHMARK_REQUEST)
@@ -1535,7 +1540,6 @@ function OPT1_WorkerCore(comm, rank, masterCore, multithread::Bool)
    _ = MPI.recv(comm; source=masterCore, tag=OPT1_WORKER_BENCHMARK_REQUEST)
 
    MPI.send(w.bench, comm; dest=masterCore, tag=OPT1_WORKER_BENCHMARK_RESPONSE)
-   w.bench.totalMapTilesCollected = length(keys(w.availableTiles))
 
    for iSendRequest::MPI.Request in w.iSendRequests
       MPI.Wait(iSendRequest)
@@ -1721,7 +1725,7 @@ function OPT1_Worker_ReceiveInitialMapDataAndJobs(comm, rank)::WorkerState
    workerBenchmarking = BenchmarkData_WorkerCore(
       rank
    )
-   w::WorkerState = WorkerState(comm, rank, availableTiles, maxX, maxY, jobAState, jobBState, nothing, workerBenchmarking, Vector{MPI.Request}())
+   w::WorkerState = WorkerState(comm, rank, availableTiles, maxX, maxY, jobAState, jobBState, nothing, workerBenchmarking, Vector{MPI.Request}(), Set{MapTile}())
    return w
 end
 
@@ -2299,6 +2303,8 @@ function OPT1_CustomAStar(w::WorkerState, pathfindingState)::Union{Array{MapTile
       end
 
       for neighbor::MapTile in neighbors
+         push!(w.exploredTiles, neighbor)
+         # w.bench.tilesExplored += 1
          newCost = pathfindingState.costSoFar[pathfindingState.currentTile] + neighbor.costToReach
 
          if !haskey(pathfindingState.costSoFar, neighbor) || newCost < pathfindingState.costSoFar[neighbor]

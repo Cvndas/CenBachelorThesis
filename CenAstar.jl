@@ -33,6 +33,7 @@ include("VariousStructs.jl")
 
 using Serialization
 include("Utilities.jl")
+
 include("OPT1_Benchmarking.jl")
 if IsDas5() == false
     include("OPT1_Graphing_Core.jl")
@@ -62,5 +63,6 @@ export PseudoWorkerCore
 export RandomMazeSpecification
 export HandcraftedMazeSpecification
 export OPT1_RunConfig
-
+export OPT1_GenerateReportString
+export OPT1_PrintReports
 end

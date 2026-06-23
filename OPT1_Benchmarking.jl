@@ -14,8 +14,8 @@ mutable struct BenchmarkData_WorkerCore
     workerId::Int # WorkerId is workerRank - 1
     numberOfOccasionsMapDataWasNotAvailableAndIHadToWait::Int
 
-    totalMapTilesCollected::Int #TODO
-    tilesExplored::Int #TODO
+    totalMapTilesCollected::Int
+    tilesExplored::Int
 
     secondsSpentWaitingForMapDataToComeIn::Float64
     secondsFromReceivingJobToHavingSentBeautifiedPaths::Float64
@@ -82,7 +82,7 @@ mutable struct BenchmarkData_WorkerCore
             0, # seconds receiving incoming map supplements
             0, # seconds processing incoming map supplements
             #,
-            -99 # tiles Received when solving initial path
+            -99, # tiles Received when solving initial path
         )
     end
 end
@@ -298,6 +298,11 @@ struct OPT1_BenchmarkingReportStruct
 
     tilesReceivedWhenSolvingInitialPath_BWA
     isMultiThreaded::Bool
+
+    totalTilesReceived_BWA
+    totalTilesExplored_BWA
+
+    # totalComputationTime::Float64
 end
 
 function OPT1_AverageBenchmarkingReportStructs(reportStructs::Vector{OPT1_BenchmarkingReportStruct})::OPT1_BenchmarkingReportStruct
@@ -360,7 +365,13 @@ function OPT1_AverageBenchmarkingReportStructs(reportStructs::Vector{OPT1_Benchm
         BWA_Average([r.secondsSpentProcessingIncomingMapSupplements_BWA for r in reportStructs]),
         #
         BWA_Average([r.tilesReceivedWhenSolvingInitialPath_BWA for r in reportStructs]),
-        first.isMultiThreaded
+        first.isMultiThreaded,
+        #
+        BWA_Average([r.totalTilesReceived_BWA for r in reportStructs]),
+        BWA_Average([r.totalTilesExplored_BWA for r in reportStructs])
+
+
+        # mean([r.totalComputationTime for r in reportStructs]),
     )
 end
 
@@ -583,6 +594,21 @@ end
 
 
 
+function OPT1_PrintReports(benchmarkFolder)
+    benchmarkFiles = GetAllBenchmarkFilesInDirectory(benchmarkFolder)
+    reportsUnsorted = []
+    for benchmarkFile in benchmarkFiles
+        deserialized::OPT1_BenchmarkingReportStruct = open(benchmarkFile, "r") do file
+            deserialize(file)
+        end
+        push!(reportsUnsorted, deserialized)
+    end
+
+    sorted = sort(reportsUnsorted, by=x -> x.workerCount)
+    for s in sorted
+        println(OPT1_GenerateReportString(s))
+    end
+end
 
 
 function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, workerDatas::Vector{BenchmarkData_WorkerCore}, stCost, stSeconds)::OPT1_BenchmarkingReportStruct
@@ -632,6 +658,11 @@ function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, work
     secondsProcessingIncomingMapSupplements_Tuples = [(w.secondsProcessingIncomingMapSupplements, w.workerId) for w in workerDatas]
 
     tilesReceivedWhenSolvingInitialPath_Tuples = [(w.tilesReceivedWhenSolvingInitialPath, w.workerId) for w in workerDatas]
+
+    tilesExplored = [(w.tilesExplored, w.workerId) for w in workerDatas]
+    tilesReceived = [(w.totalMapTilesCollected, w.workerId) for w in workerDatas]
+
+    # totalComputationTime = sum([(workerDatas.r])
 
     reportStruct = OPT1_BenchmarkingReportStruct(
         m.mapName,
@@ -686,7 +717,10 @@ function OPT1_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, work
         BestWorstAverage(secondsProcessingIncomingMapSupplements_Tuples),
         #
         BestWorstAverage(tilesReceivedWhenSolvingInitialPath_Tuples),
-        m.isMultiThreaded
+        m.isMultiThreaded,
+        # totalComputationTime
+        BestWorstAverage(tilesReceived),
+        BestWorstAverage(tilesExplored)
     )
 
 

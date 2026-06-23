@@ -1,5 +1,6 @@
 include("CenAstar.jl")
 using .CenAstar
+using Serialization
 using MPI
 
 function IsDas5()
@@ -187,9 +188,9 @@ function main_OPT1_RunA_RunBenchmarks()
             RandomMazeSpecification(250, 250),
             RandomMazeSpecification(500, 500),
             RandomMazeSpecification(750, 750),
-            RandomMazeSpecification(1000, 1000),
-            RandomMazeSpecification(2000, 2000),
-            RandomMazeSpecification(5000, 5000)
+            # RandomMazeSpecification(1000, 1000),
+            # RandomMazeSpecification(2000, 2000),
+            # RandomMazeSpecification(5000, 5000)
         ]
 
         MPI.Init()
@@ -200,7 +201,7 @@ function main_OPT1_RunA_RunBenchmarks()
         processorName = MPI.Get_processor_name()
         # println("Hello from $processorName, I am process $rank of $nranks processes!")
 
-        runConfig::OPT1_RunConfig = OPT1_RunConfig(mazeSpecs, false, path)
+        runConfig::OPT1_RunConfig = OPT1_RunConfig(mazeSpecs, false, $(path))
         CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
 
         MPI.Finalize()
@@ -219,12 +220,12 @@ function main_OPT1_RunA_RunBenchmarks()
 
 
     # Here, specify what to run
-    run(`$(mpiexec()) -np 2 julia  --project=. -e $code`)
     run(`$(mpiexec()) -np 3 julia  --project=. -e $code`)
-    run(`$(mpiexec()) -np 4 julia  --project=. -e $code`)
     run(`$(mpiexec()) -np 5 julia  --project=. -e $code`)
-    run(`$(mpiexec()) -np 6 julia  --project=. -e $code`)
-    run(`$(mpiexec()) -np 7 julia  --project=. -e $code`)
+    run(`$(mpiexec()) -np 9 julia  --project=. -e $code`)
+    # run(`$(mpiexec()) -np 5 julia  --project=. -e $code`)
+    # run(`$(mpiexec()) -np 6 julia  --project=. -e $code`)
+    # run(`$(mpiexec()) -np 7 julia  --project=. -e $code`)
 end
 
 #= run in the julia repl with
@@ -236,9 +237,19 @@ function main_OPT1_RunA_ProduceGraphs()
     CenAstar.OPT1_ProduceBenchmarkingGraphs_V2(runAFolder)
 end
 
-function main_OPT1_DAS5_ProduceGraphs()
-    benchmarkFolder = joinpath("Das5 Benchmark Data") 
+function main_OPT1_SingleRun_ProduceGraphs()
+    benchmarkFolder = joinpath("Benchmarks", "SingleRun")
     CenAstar.OPT1_ProduceBenchmarkingGraphs_V2(benchmarkFolder)
+end
+
+function main_OPT1_DAS5_ProduceGraphs()
+    benchmarkFolder = joinpath("Das5 Benchmark Data")
+    CenAstar.OPT1_ProduceBenchmarkingGraphs_V2(benchmarkFolder)
+end
+
+function main_OPT1_DAS5_ProduceReports()
+    benchmarkFolder = joinpath("Das5 Benchmark Data")
+    OPT1_PrintReports(benchmarkFolder)
 end
 
 #= run in the julia repl with
