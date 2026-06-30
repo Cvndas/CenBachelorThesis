@@ -11,6 +11,11 @@ mutable struct MutableMapTile
     end
 end
 
+function CopyMutableMapTile(old::MutableMapTile)
+    newTile = MutableMapTile(old.x, old.y, costToReach=old.costToReach)
+    return newTile
+end
+
 # isbits() does pass 
 struct MapTile
     x::Int32

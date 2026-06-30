@@ -169,6 +169,94 @@ end
 #     display(s.fig)
 # end
 
+function GetDirectNeighborCoords(x, y, xMax, yMax)
+    neighbors = []
+    north = (x, y + 1)
+    if north[2] <= yMax
+        push!(neighbors, north)
+    end
+    east = (x + 1, y)
+    if (east[1] <= xMax)
+        push!(neighbors, east)
+    end
+    south = (x, y - 1)
+    if (south[2] >= 1)
+        push!(neighbors, south)
+    end
+    west = (x - 1, y)
+    if west[1] >= 1
+        push!(neighbors, west)
+    end
+
+    return neighbors
+end
+
+function ExpandMap()
+    global s
+    expansionFactor = 2
+    newXMax = s.xMax * 2
+    newYMax = s.yMax * 2
+
+    expandedMatrix = Matrix{Union{MutableMapTile,Nothing}}(nothing, newXMax, newYMax)
+    for i in 1:size(s.mapTiles, 1)
+        for j in 1:size(s.mapTiles, 2)
+            newCoordX = i * expansionFactor
+            newCoordY = j * expansionFactor
+
+            expandedMatrix[newCoordX, newCoordY] = s.mapTiles[i, j]
+            expandedMatrix[newCoordX, newCoordY].x = newCoordX
+            expandedMatrix[newCoordX, newCoordY].y = newCoordY
+        end
+    end
+
+    while true
+        nothingFound = false
+        expansionFrontier = []
+        for el in expandedMatrix
+            if el !== nothing
+                push!(expansionFrontier, el)
+            end
+        end
+
+        for expander::MutableMapTile in expansionFrontier
+            for neighbor in GetDirectNeighborCoords(expander.x, expander.y, newXMax, newYMax)
+                nx = neighbor[1]
+                ny = neighbor[2]
+                if expandedMatrix[nx, ny] === nothing
+                    nothingFound = true
+                    expandedMatrix[nx, ny] = CopyMutableMapTile(expander)
+                    expandedMatrix[nx, ny].x = nx
+                    expandedMatrix[nx, ny].y = ny
+                end
+            end
+        end
+
+        if !nothingFound
+            break
+        end
+    end
+
+    newMatrix = Matrix{MutableMapTile}(undef, newXMax, newYMax)
+    for el in expandedMatrix
+        newMatrix[el.x, el.y] = el
+    end
+
+    # Updating the properties
+    s.xMax = newXMax
+    s.yMax = newYMax
+    s.mapTiles = newMatrix
+
+    # Updating the waypoints
+    for i in 1:length(s.wayPoints)
+        if s.wayPoints[i][1] >= 0
+            s.wayPoints[i] = (s.wayPoints[i][1] * expansionFactor, s.wayPoints[i][2] * expansionFactor)
+        end
+    end
+
+    # Updating the cursor
+    s.cursor.x *= expansionFactor
+    s.cursor.y *= expansionFactor
+end
 
 
 function RenderMapBuild()
@@ -528,6 +616,9 @@ function HandleKeyboardInput(k::Makie.Keyboard.Button)
             end
         end
         # saveState = true
+
+    elseif k == Keyboard.v
+        ExpandMap()
 
     elseif k == Keyboard._1
         s.wayPoints[1] = (s.cursor.x, s.cursor.y)

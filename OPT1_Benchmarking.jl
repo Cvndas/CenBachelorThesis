@@ -730,8 +730,9 @@ end
 
 
 function OPT1_GenerateReportFilename(reportStruct::OPT1_BenchmarkingReportStruct)
+    config = include("Config.jl")
     mapName = replace(reportStruct.mapName, ":" => "x")
-    fileName::String = "OPT1_---$(mapName)---_$(reportStruct.workerCount+1)Ranks.BENCHMARK"
+    fileName::String = "OPT1_---$(mapName)---_$(reportStruct.workerCount+1)Ranks_ScalingLevel$(config.LEVEL_SCALING).BENCHMARK"
     return fileName
 end
 

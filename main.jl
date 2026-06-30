@@ -57,6 +57,42 @@ function RunThreadcountAsserts()
 end
 
 
+# When running with more than 32 cores (which I need to do as I need 32 workers, i.e. also one more for the master)
+# there's an aggressive timeout. This function is intended to be called one maze at at time.
+function main_OPT1_DasBenchmark_HighCoreCount(mazeSize)
+    Clear()
+    if IsDas5() == false
+        error("This function only runs on DAS")
+    end
+
+    MPI.Init()
+    comm = MPI.Comm_dup(MPI.COMM_WORLD)
+    nranks = MPI.Comm_size(comm)
+    rank = MPI.Comm_rank(comm)
+    processorName = MPI.Get_processor_name()
+
+    config = include("Config.jl")
+    path = "$(config.PATH_DasRun)_with_$(nranks)_ranks_withScaling_$(config.LEVEL_SCALING)"
+    mkpath(path)
+    # for file in readdir(path, join=true)
+    #     if isfile(file)
+    #         rm(file)
+    #     end
+    # end
+    println("Cleared the old benchmarking data in $path")
+
+    mazeXYs = [mazeSize]
+    mazeSpecs = []
+    for mazeXY in mazeXYs
+        push!(mazeSpecs, RandomMazeSpecification(mazeXY, mazeXY))
+    end
+
+    runConfig::OPT1_RunConfig = OPT1_RunConfig(mazeSpecs, false, path)
+    println("Hello from $processorName on DAS-5, I am process $rank of $nranks processes!")
+    CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig, bypassAveraging=true)
+    MPI.Finalize()
+end
+
 
 function main_OPT1_DasBenchmarks()
     Clear()
@@ -72,7 +108,7 @@ function main_OPT1_DasBenchmarks()
     processorName = MPI.Get_processor_name()
 
     config = include("Config.jl")
-    path = "$(config.PATH_DasRun)_with_$(nranks)_ranks"
+    path = "$(config.PATH_DasRun)_with_$(nranks)_ranks_withScaling_$(config.LEVEL_SCALING)"
     mkpath(path)
     # for file in readdir(path, join=true)
     #     if isfile(file)

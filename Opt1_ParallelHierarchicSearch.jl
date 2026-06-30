@@ -692,7 +692,7 @@ end
 
 
 
-function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig::OPT1_RunConfig)
+function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig::OPT1_RunConfig; bypassAveraging=false)
 
    config = include("Config.jl")
 
@@ -733,19 +733,23 @@ function OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig::OPT1_RunConf
       reportStructs::Vector{OPT1_BenchmarkingReportStruct} = Vector{OPT1_BenchmarkingReportStruct}()
 
       config = include("Config.jl")
-      iterations = config.AVERAGING_ITERATIONS
+      if bypassAveraging
+         iterations = 1
+      else
+         iterations = config.AVERAGING_ITERATIONS + 1
+      end
 
-      for i in 1:(iterations+1)
+      for i in 1:(iterations)
          if rank == 0
             reportStruct::OPT1_BenchmarkingReportStruct = OPT1_Entry(comm, nranks, rank, runConfig, mazeSpec)
-            if i != 1
+            if i != 1 || bypassAveraging
                push!(reportStructs, reportStruct)
             end
          else
             OPT1_Entry(comm, nranks, rank, runConfig, mazeSpec)
          end
          if rank == 0
-            println("Completed iteration $i of $(iterations+1) for $mazeDescription with $(nranks-1) workers $mtDescription")
+            println("Completed iteration $i of $(iterations) for $mazeDescription with $(nranks-1) workers $mtDescription")
          end
       end
       if rank == 0
@@ -1168,52 +1172,28 @@ function OPT1_Master_RespondToMapRequest(s::MasterState, mapRequest::OPT1_MapReq
       OPT1_UpdateRecord(s.workerEntries[source], mapRequest)
       s.currentLevel = OPT1_TryLevelUp(s.workerEntries)
    end
-   # previousLevel = s.currentLevel
-   # leveledUp = s.currentLevel > previousLevel
-
-   # println("Map request response. Level is now $(s.currentLevel)")
-   # println("The level of the asker is $(s.workerEntries[source].workerLevel_A) or $(s.workerEntries[source].workerLevel_B)")
 
 
-   # Actual grows function
-   # TODO: Find the proper growth function. 
-   s.verticalExtension = s.verticalExtension_Default * (s.currentLevel * 3)
-   s.horizontalExtension = s.horizontalExtension_Default * (s.currentLevel * 3)
-
-   # Growth function to stress test the mechanisms
-   # s.verticalExtension = s.verticalExtension_Default + s.currentLevel
-   # s.horizontalExtension = s.horizontalExtension_Default + s.currentLevel
-
-   # if (s.currentLevel > 10)
-   #    error("debugging")
-   # else
-   #    println("Didn't error because current level is $(s.currentLevel)")
-   # end
-
-
-   radius::Int32 = Int32(s.currentLevel)
-   # println("The radius: $radius")
-
+   # TODO: Find the proper growth function, by trying out a few
+   if config.LEVEL_SCALING == 1
+      s.verticalExtension = s.verticalExtension_Default * (s.currentLevel * 3)
+      s.horizontalExtension = s.horizontalExtension_Default * (s.currentLevel * 3)
+   elseif config.LEVEL_SCALING == 2
+      s.verticalExtension = s.verticalExtension_Default * (s.currentLevel * 2)
+      s.horizontalExtension = s.horizontalExtension_Default * (s.currentLevel * 2)
+   elseif config.LEVEL_SCALING == 3
+      s.verticalExtension = s.verticalExtension_Default * (1 + s.currentLevel)
+      s.horizontalExtension = s.horizontalExtension_Default * (1 + s.currentLevel)
+   elseif config.LEVEL_SCALING == 4
+      s.verticalExtension = s.verticalExtension_Default + s.currentLevel
+      s.horizontalExtension = s.horizontalExtension_Default + s.currentLevel
+   else
+      error("Unsuported level scaling value $(config.LEVEL_SCALING)")
+   end
 
    sentMinMax::Array{Union{MinMaxY,Nothing}} = s.workerEntries[source].sentMinMax
 
-   if mapRequest.missingTile[1] > Int32(0)
-      if sentMinMax[mapRequest.missingTile[1]] !== nothing
-         previousMaxY = sentMinMax[mapRequest.missingTile[1]].maxY
-      end
-   end
-
-   # supplementMapTiles::Vector{MapTile} = OPT1_Master_BuildMapSupplement(s.computedMaze.allTiles, s.workerEntries[source].sentMinMax, mapRequest.missingTile, radius)
    supplementMapTiles::Array{MapTile,1} = OPT1_GetEstimatedNecessaryCells_StraightLine(mapRequest.wayPointA, mapRequest.wayPointB, s.computedMaze.allTiles, s.verticalExtension, s.horizontalExtension, s.maxX, s.maxY, sentMinMax)
-
-   # TODO Fix bug: Despite leveling up, the maxY is not increased 
-
-
-
-   # if mapRequest.missingTile[1] > Int32(0)
-   #    newMaxY = sentMinMax[mapRequest.missingTile[1]].maxY
-   #    @assert OPT1_Master_SupplementContainsMissingTile(s.workerEntries[source].sentMinMax, mapRequest.missingTile, supplementMapTiles) "Supplement did not contain missing tile $(mapRequest.missingTile). Level up: $leveledUp. previous maxy: $previousMaxY, new maxY: $newMaxY"
-   # end
 
    req = MPI.Isend(supplementMapTiles, s.comm, dest=source, tag=OPT1_MAP_SUPPLEMENT)
    push!(s.iSendRequests, req)
