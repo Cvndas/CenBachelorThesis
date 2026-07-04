@@ -1,5 +1,5 @@
 using DataStructures
-using .CenAstar
+using .Module_CenStar
 
 
 function _fillWithNewNeighbors!(neighbors::Array{MapTile}, currentTile::MapTile, allTiles::Array{MapTile,2}, xMax, yMax)

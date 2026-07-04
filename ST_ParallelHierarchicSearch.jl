@@ -5,7 +5,7 @@ using MPI
 function SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
 
     if rank == 0
-        CenAstar.InitializeSeed()
+        Module_CenStar.InitializeSeed()
         println("Entered main_MPI_ParallelHierarchicSearch()")
         computedMaze::ComputedMaze = ComputeMaze()
         # allPathsDict = Dict{Tuple{Int,Int},MapTile}()
@@ -18,7 +18,7 @@ function SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
 
         println("Path is done. Going to render the maze now.")
         error("This func is old and probably doesn't work anymore, or is not representative of either the naive or opt1 PHS implementations.")
-        # mazeImage = CenAstar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
+        # mazeImage = Module_CenStar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
 
         mpiPhsCost = ComputePathCost(shortestPathTiles)
 
@@ -63,7 +63,7 @@ function SingleThreaded_PHS_ReferenceFunc(startTile::MapTile, endTile::MapTile, 
 
     # ::: -------------------------:: SOLVING INITIAL PATH ::------------------------- ::: 
     localPaths = Array{Array{MapTile},1}()
-    for i in 1:length(wayPoints)-1
+    for i in 1:(length(wayPoints)-1)
         localStartTile = wayPoints[i]
         localEndTile = wayPoints[i+1]
 
@@ -85,7 +85,7 @@ function SingleThreaded_PHS_ReferenceFunc(startTile::MapTile, endTile::MapTile, 
 
     # The beautification waypoints produced one more waypoint than there was before.
     beautifiedLocalPaths = Array{Array{MapTile},1}()
-    for i in 1:length(beautificationWaypoints)-1
+    for i in 1:(length(beautificationWaypoints)-1)
         localStartTile = beautificationWaypoints[i]
         localEndTile = beautificationWaypoints[i+1]
         push!(beautifiedLocalPaths, st_AStar(localStartTile, localEndTile, allTiles))

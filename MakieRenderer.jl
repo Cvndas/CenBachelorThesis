@@ -6,7 +6,7 @@ using Random
 using Dates
 using GeometryBasics
 
-using .CenAstar
+using .Module_CenStar
 
 
 function DrawSquares(axis::Axis, coordinates::Array{Tuple{Int32,Int32}}, color)

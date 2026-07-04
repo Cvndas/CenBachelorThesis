@@ -3,7 +3,7 @@ using Colors
 using Makie.Colors
 using Random
 using Dates
-using .CenAstar
+using .Module_CenStar
 
 function ShowMap()
     fig = Figure()
@@ -101,7 +101,7 @@ function GenerateRandomPointsForMap(xMin, xMax, yMin, yMax; seed::Int64=-1)::Arr
     println("Generating random points with seed $seed")
 
     totalSquares = xMax * yMax
-    numberOfPoints = rand(1:(Int(totalSquares * 0.5)))
+    numberOfPoints = rand(1:(Int(totalSquares*0.5)))
     println("Placing $numberOfPoints points")
 
     points = Tuple{Int,Int}[]

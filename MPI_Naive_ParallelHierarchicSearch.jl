@@ -74,7 +74,7 @@ taken from the grand deliveryTiles field, with startPoint and endPoint being use
 function MPI_Naive_PhsMasterCore(comm, nranks, rank, host, initialMapData::MPI_Naive_PhsMapData, computedMaze)
     # TODO: Make this an ISend, of course, to latency hide the landmark computations
     println("The maze is ready. Rank 0 is sending it to all other cores now.")
-    for recipient in 1:nranks-1
+    for recipient in 1:(nranks-1)
         MPI.send(initialMapData, comm; dest=recipient, tag=INITIAL_DELIVERY)
         # @assert isbits(initialMapData) "initialMapData was not bits"
     end
@@ -86,14 +86,14 @@ function MPI_Naive_PhsMasterCore(comm, nranks, rank, host, initialMapData::MPI_N
     end
 
     # ::: -------------------------:: Sending the waypoints to the cores ::------------------------- ::: // 
-    for i in 1:nranks-2
+    for i in 1:(nranks-2)
         MPI.send((initialWayPoints[i], initialWayPoints[i+1]), comm; dest=i, tag=INITIAL_WAYPOINTS)
         println("Sent waypoints $i and $(i + 1) to worker $i")
     end
 
     # ::: -------------------------:: Receiving the local paths ::------------------------- ::: // 
     localPaths::Array{Array{MapTile,1},1} = Array{Array{MapTile,1},1}()
-    for rank in 1:nranks-2
+    for rank in 1:(nranks-2)
         (localPath::Array{MapTile}, status) = MPI.recv(MPI.ANY_SOURCE, LOCAL_PATH_DELIVERY, comm)
         push!(localPaths, localPath)
         println("Master rank received a local path with $(length(localPath)) maptiles from $(status.source) with tag $(status.tag)")
@@ -114,7 +114,7 @@ function MPI_Naive_PhsMasterCore(comm, nranks, rank, host, initialMapData::MPI_N
     push!(beautificationWayPoints, computedMaze.endTile)
 
     # // ::: -------------------------:: Sending the beautification waypoints to the cores ::------------------------- ::: // 
-    for i in 1:nranks-1
+    for i in 1:(nranks-1)
         MPI.send((beautificationWayPoints[i], beautificationWayPoints[i+1]), comm; dest=i, tag=BEAUTIFICATION_WAYPOINTS)
         println("Sent waypoints $i and $(i + 1) to worker $i")
     end
@@ -123,7 +123,7 @@ function MPI_Naive_PhsMasterCore(comm, nranks, rank, host, initialMapData::MPI_N
 
     # // ::: -------------------------:: Receiving the beautified paths from the cores ::------------------------- ::: // 
     beautificationPaths::Array{Array{MapTile,1},1} = Array{Array{MapTile,1},1}()
-    for rank in 1:nranks-1
+    for rank in 1:(nranks-1)
         (beautificationPath::Array{MapTile}, status) = MPI.recv(MPI.ANY_SOURCE, BEAUTIFICATION_PATH_DELIVERY, comm)
         push!(beautificationPaths, beautificationPath)
         println("Master rank received a beautified path with $(length(beautificationPath)) maptiles from $(status.source) with tag $(status.tag)")
@@ -145,7 +145,7 @@ function MPI_Naive_PhsMasterCore(comm, nranks, rank, host, initialMapData::MPI_N
         MapTile[],
         MapTile[])
 
-    _ = CenAstar.ShowMaze(solved)
+    _ = Module_CenStar.ShowMaze(solved)
 end
 
 
@@ -225,7 +225,7 @@ end
 function MPI_Naive_PhsEntry(comm, nranks, rank, host)
     if rank == 0
         println("Entered MPI_Naive_PhsEntry()")
-        CenAstar.InitializeSeed() # only initializes the seed, for now.
+        Module_CenStar.InitializeSeed() # only initializes the seed, for now.
         computedMaze::ComputedMaze = ComputeMaze()
         initialMapData::MPI_Naive_PhsMapData = MPI_Naive_PhsMapData(computedMaze.allTiles, nothing, nothing)
     end

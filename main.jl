@@ -1,5 +1,5 @@
-include("CenAstar.jl")
-using .CenAstar
+include("Module_CenStar.jl")
+using .Module_CenStar
 using Serialization
 using MPI
 
@@ -59,7 +59,7 @@ end
 
 # When running with more than 32 cores (which I need to do as I need 32 workers, i.e. also one more for the master)
 # there's an aggressive timeout. This function is intended to be called one maze at at time.
-function main_OPT1_DasBenchmark_HighCoreCount(mazeSize)
+function main_CenStar_DasBenchmark_HighCoreCount(mazeSize)
     Clear()
     if IsDas5() == false
         error("This function only runs on DAS")
@@ -87,14 +87,14 @@ function main_OPT1_DasBenchmark_HighCoreCount(mazeSize)
         push!(mazeSpecs, RandomMazeSpecification(mazeXY, mazeXY))
     end
 
-    runConfig::OPT1_RunConfig = OPT1_RunConfig(mazeSpecs, false, path)
+    runConfig::CenStar_RunConfig = CenStar_RunConfig(mazeSpecs, false, path)
     println("Hello from $processorName on DAS-5, I am process $rank of $nranks processes!")
-    CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig, bypassAveraging=true)
+    Module_CenStar.CenStar_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig, bypassAveraging=true)
     MPI.Finalize()
 end
 
 
-function main_OPT1_DasBenchmarks()
+function main_CenStar_DasBenchmarks()
     Clear()
     if IsDas5() == false
         error("This function only runs on DAS")
@@ -123,18 +123,18 @@ function main_OPT1_DasBenchmarks()
         push!(mazeSpecs, RandomMazeSpecification(mazeXY, mazeXY))
     end
 
-    runConfig::OPT1_RunConfig = OPT1_RunConfig(mazeSpecs, false, path)
+    runConfig::CenStar_RunConfig = CenStar_RunConfig(mazeSpecs, false, path)
     println("Hello from $processorName on DAS-5, I am process $rank of $nranks processes!")
-    CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
+    Module_CenStar.CenStar_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
     MPI.Finalize()
 end
 
 
 
 #= Run with
-include("main.jl"); main_OPT1_SingleRun(_, _);
+include("main.jl"); main_CenStar_SingleRun(_, _);
 =#
-function main_OPT1_SingleRun(workerCount, mazeXY, multiThread)
+function main_CenStar_SingleRun(workerCount, mazeXY, multiThread)
     Clear()
     RunThreadcountAsserts()
     println("Starting the Run with config[workerCount: $workerCount, mazeXY: $mazeXY]")
@@ -163,22 +163,22 @@ function main_OPT1_SingleRun(workerCount, mazeXY, multiThread)
         processorName = MPI.Get_processor_name()
 
         randomMazeSpec = RandomMazeSpecification(mazeXY, mazeXY)
-        runConfig::OPT1_RunConfig = OPT1_RunConfig([randomMazeSpec], multiThread, path)
+        runConfig::CenStar_RunConfig = CenStar_RunConfig([randomMazeSpec], multiThread, path)
         println("Hello from $processorName on DAS-5, I am process $rank of $nranks processes!")
 
-        CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
+        Module_CenStar.CenStar_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
 
         MPI.Finalize()
     else
         code = quote
             using MPI
-            include("CenAstar.jl")
-            using .CenAstar
+            include("Module_CenStar.jl")
+            using .Module_CenStar
 
             config = include("Config.jl")
 
             randomMazeSpec = RandomMazeSpecification($(mazeXY), $(mazeXY))
-            runConfig::OPT1_RunConfig = OPT1_RunConfig([randomMazeSpec], $(multiThread), config.PATH_SingleRun)
+            runConfig::CenStar_RunConfig = CenStar_RunConfig([randomMazeSpec], $(multiThread), config.PATH_SingleRun)
 
             MPI.Init()
             comm = MPI.Comm_dup(MPI.COMM_WORLD)
@@ -188,7 +188,7 @@ function main_OPT1_SingleRun(workerCount, mazeXY, multiThread)
             processorName = MPI.Get_processor_name()
             # println("Hello from $processorName, I am process $rank of $nranks processes!")
 
-            CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
+            Module_CenStar.CenStar_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
 
             MPI.Finalize()
         end
@@ -200,7 +200,7 @@ function main_OPT1_SingleRun(workerCount, mazeXY, multiThread)
 end
 
 
-function main_OPT1_RunA_RunBenchmarks()
+function main_CenStar_RunA_RunBenchmarks()
     Clear()
     RunThreadcountAsserts()
     println("Starting the Benchmarking Run A")
@@ -216,8 +216,8 @@ function main_OPT1_RunA_RunBenchmarks()
 
     code = quote
         using MPI
-        include("CenAstar.jl")
-        using .CenAstar
+        include("Module_CenStar.jl")
+        using .Module_CenStar
 
         mazeSpecs = [
             RandomMazeSpecification(100, 100),
@@ -237,8 +237,8 @@ function main_OPT1_RunA_RunBenchmarks()
         processorName = MPI.Get_processor_name()
         # println("Hello from $processorName, I am process $rank of $nranks processes!")
 
-        runConfig::OPT1_RunConfig = OPT1_RunConfig(mazeSpecs, false, $(path))
-        CenAstar.OPT1_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
+        runConfig::CenStar_RunConfig = CenStar_RunConfig(mazeSpecs, false, $(path))
+        Module_CenStar.CenStar_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
 
         MPI.Finalize()
     end
@@ -267,25 +267,25 @@ end
 #= run in the julia repl with
 include("main.jl"); main_MPI_ParallelHierarchicSearch_ProduceBenchmarkGraphs_RunA();
 =#
-function main_OPT1_RunA_ProduceGraphs()
+function main_CenStar_RunA_ProduceGraphs()
     RunThreadcountAsserts()
     runAFolder = joinpath("Benchmarks", "RunA")
-    CenAstar.OPT1_ProduceBenchmarkingGraphs_V2(runAFolder)
+    Module_CenStar.CenStar_ProduceBenchmarkingGraphs_V2(runAFolder)
 end
 
-function main_OPT1_SingleRun_ProduceGraphs()
+function main_CenStar_SingleRun_ProduceGraphs()
     benchmarkFolder = joinpath("Benchmarks", "SingleRun")
-    CenAstar.OPT1_ProduceBenchmarkingGraphs_V2(benchmarkFolder)
+    Module_CenStar.CenStar_ProduceBenchmarkingGraphs_V2(benchmarkFolder)
 end
 
-function main_OPT1_DAS5_ProduceGraphs()
+function main_CenStar_DAS5_ProduceGraphs()
     benchmarkFolder = joinpath("Das5 Benchmark Data")
-    CenAstar.OPT1_ProduceBenchmarkingGraphs_V2(benchmarkFolder)
+    Module_CenStar.CenStar_ProduceBenchmarkingGraphs_V2(benchmarkFolder)
 end
 
-function main_OPT1_DAS5_ProduceReports()
+function main_CenStar_DAS5_ProduceReports()
     benchmarkFolder = joinpath("Das5 Benchmark Data")
-    OPT1_PrintReports(benchmarkFolder)
+    CenStar_PrintReports(benchmarkFolder)
 end
 
 #= run in the julia repl with
@@ -297,8 +297,8 @@ function main_MPI_ParallelHierarchicSearch_HandcraftedMaps()
     println("Started main()")
     code = quote
         using MPI
-        include("CenAstar.jl")
-        using .CenAstar
+        include("Module_CenStar.jl")
+        using .Module_CenStar
 
         MPI.Init()
         comm = MPI.Comm_dup(MPI.COMM_WORLD)
@@ -312,9 +312,9 @@ function main_MPI_ParallelHierarchicSearch_HandcraftedMaps()
         # actually have access to it. 
         multithread = false
         println("Hello from $processorName, I am process $rank of $nranks processes!")
-        # CenAstar.MPI_Naive_PhsEntry(comm, nranks, rank, host)
-        CenAstar.OPT1_Entry(comm, nranks, rank, masterCore, true)
-        # CenAstar.SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
+        # Module_CenStar.MPI_Naive_PhsEntry(comm, nranks, rank, host)
+        Module_CenStar.CenStar_Entry(comm, nranks, rank, masterCore, true)
+        # Module_CenStar.SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
         MPI.Finalize()
     end
     run(`$(mpiexec()) -np 8 julia --project=. -e $code`)
@@ -332,8 +332,8 @@ function main_MPI_ParallelHierarchicSearch()
     println("Started main()")
     code = quote
         using MPI
-        include("CenAstar.jl")
-        using .CenAstar
+        include("Module_CenStar.jl")
+        using .Module_CenStar
 
         MPI.Init()
         comm = MPI.Comm_dup(MPI.COMM_WORLD)
@@ -341,9 +341,9 @@ function main_MPI_ParallelHierarchicSearch()
         rank = MPI.Comm_rank(comm)
         host = MPI.Get_processor_name()
         println("Hello from $host, I am process $rank of $nranks processes!")
-        # CenAstar.MPI_Naive_PhsEntry(comm, nranks, rank, host)
-        CenAstar.OPT1_Entry(comm, nranks, rank, host, false)
-        # CenAstar.SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
+        # Module_CenStar.MPI_Naive_PhsEntry(comm, nranks, rank, host)
+        Module_CenStar.CenStar_Entry(comm, nranks, rank, host, false)
+        # Module_CenStar.SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
         MPI.Finalize()
     end
     # run(`$(mpiexec()) -np 8 julia --project=. -e $code`)
@@ -358,8 +358,8 @@ include("main.jl"); main_MapBuilder();
 =#
 function main_MapBuilder(; mapToEdit::String="")
     Clear()
-    CenAstar.InitializeSeed()
-    CenAstar.RunMapBuilder(mapToEdit)
+    Module_CenStar.InitializeSeed()
+    Module_CenStar.RunMapBuilder(mapToEdit)
 
     println("Exiting main()")
 end
@@ -370,24 +370,24 @@ include("main.jl"); main_SingleThreadedAStar();
 function main_SingleThreadedAStar()
     Clear()
     error("This whole code path is incompatible with many recent code changes and also irrelevant, as single-threaded A* been integrated into OPT1.")
-    CenAstar.InitializeSeed()
+    Module_CenStar.InitializeSeed()
 
     println("Entered main_SingleThreadedAStar()")
     # if COMPUTE_MAZE
-    computedMaze::ComputedMaze = CenAstar.ComputeMaze()
+    computedMaze::ComputedMaze = Module_CenStar.ComputeMaze()
     allPathsDict = Dict{Tuple{Int,Int},MapTile}()
     for mapTile in computedMaze.traversablePaths
         allPathsDict[(mapTile.x, mapTile.y)] = mapTile
     end
 
     println("Going to solve the maze with Single Threaded A*")
-    @time shortestPathTiles = CenAstar.st_AStar(computedMaze.startTile, computedMaze.endTile, computedMaze.allTiles)
+    @time shortestPathTiles = Module_CenStar.st_AStar(computedMaze.startTile, computedMaze.endTile, computedMaze.allTiles)
 
     # @assert computedMaze.wallMapTiles[1].color == :black "Wallmaptiles had wrong color"
     attemptedPathTiles = MapTile[]
 
     println("Path is done. Going to render the maze now.")
-    # mazeImage = CenAstar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
+    # mazeImage = Module_CenStar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
     # save("mazeImage.png", mazeImage)
     # TODO: Make ShowMaze return a figure, so I can put them side by side, give them a title, etc.
     ComputePathCost = path -> sum(tile.costToReach for tile::MapTile in path)
@@ -404,13 +404,13 @@ end
 include("main.jl"); main_PseudoWorkerCore();
  =#
 function main_PseudoWorkerCore()
-    CenAstar.PseudoWorkerCore()
+    Module_CenStar.PseudoWorkerCore()
 end
 
 #= run with
 include("main.jl"); main_MultiThreadedTesting();
  =#
 # function main_MultiThreadedTesting()
-#     CenAstar.MultiThreadedTestingGround()
+#     Module_CenStar.MultiThreadedTestingGround()
 # end
 
