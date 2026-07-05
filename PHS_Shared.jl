@@ -50,16 +50,16 @@ function _MoveOffWalls(straightLine::Array{MapTile,1}, originalIndex, minIndex, 
     return safeIndex
 end
 
-function GenerateCoreAppropriateWaypoints(hardcodedWaypoints::Array{MapTile,1}, allTiles::Array{MapTile,2}, nranks)::Array{MapTile}
+function GenerateInitialWaypoints_HandcraftedMap(hardcodedWaypoints::Array{MapTile,1}, allTiles::Array{MapTile,2}, nranks)::Array{MapTile}
     workerCoreCount = nranks - 1
 
     println("Starting with $(length(hardcodedWaypoints)) waypoints, and going to divide them among $workerCoreCount cores")
+    println("The hardcoded waypoints are as follows: ")
     display(hardcodedWaypoints)
 
     #= Idea: First form straight paths between each hardcoded waypoint. Load these into an array. Then grab 
              waypoints from this array.
     =#
-
 
     #=
     This idea for forming a straight line is so much simpler than dealing with floating points->int conversions
@@ -70,9 +70,8 @@ function GenerateCoreAppropriateWaypoints(hardcodedWaypoints::Array{MapTile,1}, 
 
     straightLine::Array{MapTile,1} = []
 
-    goUp::Bool = true
     # Forming straight lines from A to B
-    for i in 1:length(hardcodedWaypoints)-1
+    for i in 1:(length(hardcodedWaypoints)-1)
 
         A::MapTile = hardcodedWaypoints[i]
         B::MapTile = hardcodedWaypoints[i+1]
@@ -92,21 +91,15 @@ function GenerateCoreAppropriateWaypoints(hardcodedWaypoints::Array{MapTile,1}, 
         target::Tuple{Int32,Int32} = (B.x, B.y)
 
         push!(straightLine, allTiles[current[1], current[2]])
-
         while current != target
-            if goUp
+            if current[2] != B.y
                 current = (current[1], current[2] + yDir)
-            else
+            end
+            if current[1] != B.x
                 current = (current[1] + xDir, current[2])
             end
 
             push!(straightLine, allTiles[current[1], current[2]])
-
-            if goUp && current[1] != target[1]
-                goUp = false
-            elseif !goUp && current[2] != target[2]
-                goUp = true
-            end
         end
         # println("Set up the waypoints for path $i and $(i + 1)")
     end
@@ -123,12 +116,12 @@ function GenerateCoreAppropriateWaypoints(hardcodedWaypoints::Array{MapTile,1}, 
     straightLineLen = length(straightLine)
     tilesPerCore = straightLineLen ÷ workerCoreCount
     tileIndex = 1
-    for i in 1:workerCoreCount-1
+    for i in 1:(workerCoreCount-1)
         lastTileIndex = tileIndex + tilesPerCore
         if lastTileIndex > straightLineLen
             lastTileIndex = straightLineLen
         end
-        halfwayIndex = lastTileIndex - tileIndex
+        halfwayIndex = tileIndex + (lastTileIndex - tileIndex) ÷ 2
 
         # wayPointA = straightLine[tileIndex]
         pointBIndex = _MoveOffWalls(straightLine, halfwayIndex, tileIndex, lastTileIndex - 1)
@@ -153,7 +146,7 @@ function GenerateCoreAppropriateWaypoints(hardcodedWaypoints::Array{MapTile,1}, 
     if lastTileIndex > straightLineLen
         lastTileIndex = straightLineLen
     end
-    halfwayIndex = lastTileIndex - tileIndex
+    halfwayIndex = tileIndex + (lastTileIndex - tileIndex) ÷ 2
 
     # push!(allWayPoints, straightLine[tileIndex])
     push!(allWayPoints, straightLine[halfwayIndex])
@@ -173,7 +166,7 @@ end
 
 # This is not a smart function. The waypoints, while guaranteed to be reachable, may actually be walls (expensive to break), 
 # and reaching them may be very expensive. Smoothing is necessary to make the path optimal.
-function GenerateInitialWaypoints(startTile::MapTile, endTile::MapTile, pathCount::Int, allTiles::Array{MapTile,2})
+function GenerateInitialWaypoints_RandomMap(startTile::MapTile, endTile::MapTile, pathCount::Int, allTiles::Array{MapTile,2})
     jumpX::Int = abs((endTile.x - startTile.x)) ÷ pathCount
     jumpY::Int = abs((endTile.y - startTile.y)) ÷ pathCount
 
@@ -181,7 +174,7 @@ function GenerateInitialWaypoints(startTile::MapTile, endTile::MapTile, pathCoun
     currentY::Int = startTile.y
     wayPoints::Array{MapTile} = [startTile]
 
-    for i in 1:pathCount-1
+    for i in 1:(pathCount-1)
         currentX += jumpX
         currentY += jumpY
         wayPoint::MapTile = allTiles[currentX, currentY]

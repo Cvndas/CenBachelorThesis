@@ -589,6 +589,10 @@ function CenStar_GetEstimatedNecessaryCells_StraightLine(wayPointA::MapTile, way
       if highest > maxY
          highest = maxY
       end
+      if (highest < 1)
+         highest = 1
+      end
+
 
       columnMinMax = sentMinMax[currentDiagonal_X]
 
@@ -596,7 +600,7 @@ function CenStar_GetEstimatedNecessaryCells_StraightLine(wayPointA::MapTile, way
          for v in lowest:highest
             push!(coordinates, (currentDiagonal_X, v))
          end
-         sentMinMax[currentDiagonal_X] = MinMaxY(lowest, highest)
+         sentMinMax[currentDiagonal_X] = MinMaxY(Int32(lowest), Int32(highest))
 
       else # If the sentMinMax did exist for this column, use that to selectively gather tiles to send
          if highest < columnMinMax.minY
@@ -645,7 +649,7 @@ end
 
 
 
-function CenStar_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig::CenStar_RunConfig; bypassAveraging=false)
+function CenStar_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig::CenStar_RunConfig)
 
    config = include("Config.jl")
 
@@ -686,16 +690,15 @@ function CenStar_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig::CenStar_R
       reportStructs::Vector{CenStar_BenchmarkingReportStruct} = Vector{CenStar_BenchmarkingReportStruct}()
 
       config = include("Config.jl")
-      if bypassAveraging
-         iterations = 1
-      else
-         iterations = config.AVERAGING_ITERATIONS + 1
-      end
+      iterations = config.AVERAGING_ITERATIONS + 1
 
+      if rank == 0
+         println("Going to perform $iterations iterations for $mazeDescription with $(nranks-1) workers")
+      end
       for i in 1:(iterations)
          if rank == 0
             reportStruct::CenStar_BenchmarkingReportStruct = CenStar_Entry(comm, nranks, rank, runConfig, mazeSpec)
-            if i != 1 || bypassAveraging
+            if i != 1
                push!(reportStructs, reportStruct)
             end
          else
@@ -882,6 +885,7 @@ function CenStar_MasterCore(comm, nranks, computedMaze::ComputedMaze, mapName::S
    s.benchmarkData_Master.finalSize = s.horizontalExtension * s.verticalExtension
 
    # Limitation here is that maxX and maxY have to be different from previous mazes for this to be correct
+   println("Going to perform a single-threaded solve now...")
    stSeconds = @elapsed stSolution = st_AStar(s.computedMaze.startTile, s.computedMaze.endTile, s.computedMaze.allTiles)
    stCost = ComputePathCost(stSolution)
    # println("The single threaded solve for a maze of $(s.maxX), $(s.maxY) was freshly computed")
@@ -941,10 +945,11 @@ function CenStar_Master_HandleOfflinePrelude(comm, nranks, computedMaze::Compute
 
    # Let's first generate some waypoints, as these determine what data the workers need
    initialWayPoints::Array{MapTile} = []
-   if length(computedMaze.optionalWaypoints) == 0
-      initialWayPoints = GenerateInitialWaypoints(computedMaze.startTile, computedMaze.endTile, (nranks - 1) * 2, computedMaze.allTiles)
-   else
-      initialWayPoints = GenerateCoreAppropriateWaypoints(computedMaze.optionalWaypoints, computedMaze.allTiles, nranks)
+
+   if length(computedMaze.optionalWaypoints) == 0 # Random map
+      initialWayPoints = GenerateInitialWaypoints_RandomMap(computedMaze.startTile, computedMaze.endTile, (nranks - 1) * 2, computedMaze.allTiles)
+   else # Handcrafted waypoints 
+      initialWayPoints = GenerateInitialWaypoints_HandcraftedMap(computedMaze.optionalWaypoints, computedMaze.allTiles, nranks)
    end
 
    initialPaths::Vector{Tuple{MapTile,MapTile}} = Tuple{MapTile,MapTile}[]
@@ -1127,7 +1132,6 @@ function CenStar_Master_RespondToMapRequest(s::MasterState, mapRequest::CENSTAR_
    end
 
 
-   # TODO: Find the proper growth function, by trying out a few
    if config.LEVEL_SCALING == 1
       s.verticalExtension = s.verticalExtension_Default * (s.currentLevel * 3)
       s.horizontalExtension = s.horizontalExtension_Default * (s.currentLevel * 3)
@@ -2208,7 +2212,6 @@ end
 
 function CenStar_CustomAStar(w::WorkerState, pathfindingState::WorkerPathfindingState)::Union{Array{MapTile},Nothing}
    config = include("Config.jl")
-   heuristicBooster = config.HEURISTIC_BOOSTER
 
    # Declaring this outside so it doesn't get re-allocated every iteration
    neighbors::Array{MapTile} = MapTile[]
@@ -2242,7 +2245,7 @@ function CenStar_CustomAStar(w::WorkerState, pathfindingState::WorkerPathfinding
 
          if !haskey(pathfindingState.costSoFar, neighbor) || newCost < pathfindingState.costSoFar[neighbor]
             pathfindingState.costSoFar[neighbor] = newCost
-            priority = newCost + heuristicBooster * _heuristic(neighbor, pathfindingState.endTile)
+            priority = newCost + _heuristic(neighbor, pathfindingState.endTile)
             pathfindingState.frontier[neighbor] = priority
             pathfindingState.cameFrom[neighbor] = pathfindingState.currentTile
          end

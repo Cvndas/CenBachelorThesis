@@ -17,37 +17,6 @@ function Clear()
     print("\33[2J\33[H")
 end
 
-#=
-TODO very crucial:
-For randomly generated maps, when placing waypoints, make sure they are not placed on walls ,as
-in its current state maybe it is going to search for all the nodes that are cheaper than that
-    waypoint sitting on a wall.
-    Shouldn't be too difficult to fix. Just try all the neighbors to put the waypoint on it. If
-    no, add those neighbors to a frontier, try the same thing on that frontier, until one waypoint is
-    found that is not on a wall.
-#=
-=#
-=#
-
-#=
-TODO: 
-For the benchmarking in the OPT1 file, when a worker has sent its beautification path, 
-it needs to wait for a signal from the master to send a benchmarking data package.
-
-Important that these benchmarking packages are only being sent over to the master when 
-the actual work is fully complete, so there's no network congestion or other overhead
-from non-work packages being sent over MPI.
-
-
-=#
-
-# TODO: Functionality to run the entire benchmark for each map and core config
-# x times in a row, and discarding the result of the first run, then storing
-# the average, the lowest, the fastest, etc, and using the averages to compare
-# to the single threaded and other configurations of MPI
-
-# TODO: Only when this warmup stuff is implemented, check the benchmarks 
-# for suspicious values, to sniff out any potential benchmarking bugs
 
 function RunThreadcountAsserts()
     threadCount = Threads.nthreads()
@@ -57,41 +26,6 @@ function RunThreadcountAsserts()
 end
 
 
-# When running with more than 32 cores (which I need to do as I need 32 workers, i.e. also one more for the master)
-# there's an aggressive timeout. This function is intended to be called one maze at at time.
-function main_CenStar_DasBenchmark_HighCoreCount(mazeSize)
-    Clear()
-    if IsDas5() == false
-        error("This function only runs on DAS")
-    end
-
-    MPI.Init()
-    comm = MPI.Comm_dup(MPI.COMM_WORLD)
-    nranks = MPI.Comm_size(comm)
-    rank = MPI.Comm_rank(comm)
-    processorName = MPI.Get_processor_name()
-
-    config = include("Config.jl")
-    path = "$(config.PATH_DasRun)_with_$(nranks)_ranks_withScaling_$(config.LEVEL_SCALING)"
-    mkpath(path)
-    # for file in readdir(path, join=true)
-    #     if isfile(file)
-    #         rm(file)
-    #     end
-    # end
-    println("Cleared the old benchmarking data in $path")
-
-    mazeXYs = [mazeSize]
-    mazeSpecs = []
-    for mazeXY in mazeXYs
-        push!(mazeSpecs, RandomMazeSpecification(mazeXY, mazeXY))
-    end
-
-    runConfig::CenStar_RunConfig = CenStar_RunConfig(mazeSpecs, false, path)
-    println("Hello from $processorName on DAS-5, I am process $rank of $nranks processes!")
-    Module_CenStar.CenStar_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig, bypassAveraging=true)
-    MPI.Finalize()
-end
 
 
 function main_CenStar_DasBenchmarks()
@@ -110,12 +44,15 @@ function main_CenStar_DasBenchmarks()
     config = include("Config.jl")
     path = "$(config.PATH_DasRun)_with_$(nranks)_ranks_withScaling_$(config.LEVEL_SCALING)"
     mkpath(path)
+
     # for file in readdir(path, join=true)
     #     if isfile(file)
     #         rm(file)
     #     end
     # end
-    println("Cleared the old benchmarking data in $path")
+    # if rank == 0
+    #     println("Cleared the old benchmarking data in $path")
+    # end
 
     mazeXYs = [100, 200, 500, 1000, 2000, 5000]
     mazeSpecs = []
@@ -124,7 +61,7 @@ function main_CenStar_DasBenchmarks()
     end
 
     runConfig::CenStar_RunConfig = CenStar_RunConfig(mazeSpecs, false, path)
-    println("Hello from $processorName on DAS-5, I am process $rank of $nranks processes!")
+    println("Hello from $processorName on DAS-5, I am rank $rank of $nranks rank")
     Module_CenStar.CenStar_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
     MPI.Finalize()
 end
@@ -150,7 +87,6 @@ function main_CenStar_SingleRun(workerCount, mazeXY, multiThread)
             rm(file)
         end
     end
-    println("Cleared the old benchmarking data in $path")
 
     if IsDas5()
         println("RUNNING ON DAS-5")
@@ -291,7 +227,7 @@ end
 #= run in the julia repl with
 include("main.jl"); main_MPI_ParallelHierarchicSearch_HandcraftedMaps();
 =#
-function main_MPI_ParallelHierarchicSearch_HandcraftedMaps()
+function main_CenStar_HandcraftedMaps(mapNames::Vector{String})
     Clear()
     RunThreadcountAsserts()
     println("Started main()")
@@ -307,20 +243,28 @@ function main_MPI_ParallelHierarchicSearch_HandcraftedMaps()
         processorName = MPI.Get_processor_name()
         masterCore = 0
 
-        # TODO: Define a proper configuration object that I pass in, which includes maze size, 
-        # multithreading, maze type, etc. And build it inside of Entry() so that the code will
-        # actually have access to it. 
         multithread = false
         println("Hello from $processorName, I am process $rank of $nranks processes!")
         # Module_CenStar.MPI_Naive_PhsEntry(comm, nranks, rank, host)
-        Module_CenStar.CenStar_Entry(comm, nranks, rank, masterCore, true)
+
+        handcraftedMazeSpecs = []
+        for mapName in $(mapNames)
+            push!(handcraftedMazeSpecs, HandcraftedMazeSpecification(mapName))
+        end
+
+        config = include("Config.jl")
+
+        path = "$(config.PATH_LOCAL)_HANDCRAFTEDMAPS_with_$(nranks)_ranks_withScaling_$(config.LEVEL_SCALING)"
+        runConfig::CenStar_RunConfig = CenStar_RunConfig(handcraftedMazeSpecs, false, path)
+
+        Module_CenStar.CenStar_Entry_BenchmarkingRunA(comm, nranks, rank, runConfig)
         # Module_CenStar.SingleThreaded_PHS_ReferenceFunc_Entry(comm, nranks, rank, host)
         MPI.Finalize()
     end
     run(`$(mpiexec()) -np 8 julia --project=. -e $code`)
     # run(`$(mpiexec()) -np 4 julia --project=. -e $code`)
     # run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
-    # run(`$(mpiexec()) -np 2 julia --project=. -e $code`)
+    # run(`$(mpiexec()) -np 3 julia --project=. -e $code`)
 end
 
 #= run in the julia repl with
@@ -364,53 +308,4 @@ function main_MapBuilder(; mapToEdit::String="")
     println("Exiting main()")
 end
 
-#= run with
-include("main.jl"); main_SingleThreadedAStar();
- =#
-function main_SingleThreadedAStar()
-    Clear()
-    error("This whole code path is incompatible with many recent code changes and also irrelevant, as single-threaded A* been integrated into OPT1.")
-    Module_CenStar.InitializeSeed()
-
-    println("Entered main_SingleThreadedAStar()")
-    # if COMPUTE_MAZE
-    computedMaze::ComputedMaze = Module_CenStar.ComputeMaze()
-    allPathsDict = Dict{Tuple{Int,Int},MapTile}()
-    for mapTile in computedMaze.traversablePaths
-        allPathsDict[(mapTile.x, mapTile.y)] = mapTile
-    end
-
-    println("Going to solve the maze with Single Threaded A*")
-    @time shortestPathTiles = Module_CenStar.st_AStar(computedMaze.startTile, computedMaze.endTile, computedMaze.allTiles)
-
-    # @assert computedMaze.wallMapTiles[1].color == :black "Wallmaptiles had wrong color"
-    attemptedPathTiles = MapTile[]
-
-    println("Path is done. Going to render the maze now.")
-    # mazeImage = Module_CenStar.ShowMaze(computedMaze.wallMapTiles, computedMaze.pathMapTiles, computedMaze.mapBorders, shortestPathTiles, attemptedPathTiles)
-    # save("mazeImage.png", mazeImage)
-    # TODO: Make ShowMaze return a figure, so I can put them side by side, give them a title, etc.
-    ComputePathCost = path -> sum(tile.costToReach for tile::MapTile in path)
-    AStar_Cost = ComputePathCost(shortestPathTiles)
-
-    println("\n--- THE RESULTS ---\n")
-    println("AStar found a path with cost $AStar_Cost")
-
-    # fig = Figure()
-    println("Done with main().")
-end
-
-#= run with
-include("main.jl"); main_PseudoWorkerCore();
- =#
-function main_PseudoWorkerCore()
-    Module_CenStar.PseudoWorkerCore()
-end
-
-#= run with
-include("main.jl"); main_MultiThreadedTesting();
- =#
-# function main_MultiThreadedTesting()
-#     Module_CenStar.MultiThreadedTestingGround()
-# end
 

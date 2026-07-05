@@ -44,22 +44,17 @@ include("MapTile_Functions.jl")
 include("MapFunctions.jl")
 include("MazeGenerator.jl")
 if IsDas5() == false
-    include("MakiePlayground.jl")
     include("MakieRenderer.jl")
-    include("MapBuilder/MapBuilder.jl")
+    include("MapBuilder.jl")
 end
 include("AStar_Shared.jl")
 include("AStar_SingleThreaded.jl")
 include("PHS_Shared.jl")
-include("MPI_Naive_ParallelHierarchicSearch.jl")
 include("CenStar.jl")
-include("ST_ParallelHierarchicSearch.jl")
-include("MultithreadingPlayground.jl")
 
 export LoadMap
 export CenStar_ProduceBenchmarkGraphs
 # export MultiThreadedTestingGround
-export PseudoWorkerCore
 export RandomMazeSpecification
 export HandcraftedMazeSpecification
 export CenStar_RunConfig

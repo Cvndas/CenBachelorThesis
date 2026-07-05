@@ -613,7 +613,7 @@ end
 
 function CenStar_GenerateBenchmarkReport(masterData::BenchmarkData_MasterCore, workerDatas::Vector{BenchmarkData_WorkerCore}, stCost, stSeconds)::CenStar_BenchmarkingReportStruct
     m::BenchmarkData_MasterCore = masterData
-    equivalentWidthHeight::Int = Int(sqrt(m.totalMapSize))
+    equivalentWidthHeight::Int = round(Int, sqrt(m.totalMapSize))
 
     # Create tuples for each metric
     occasionsTuples = [(w.numberOfOccasionsMapDataWasNotAvailableAndIHadToWait, w.workerId) for w in workerDatas]
